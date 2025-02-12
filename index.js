@@ -1,6 +1,5 @@
 const express = require("express")
 const ConnectDB = require("./db/connection")
-const welcomeRoute = require("./routes/welcomeRoute")
 const dotenv = require("dotenv")
 
 const app = express()
@@ -13,7 +12,12 @@ const PORT = process.env.PORT || 3000
 
 ConnectDB()
 
-app.use("/api", welcomeRoute)
+// API Routes for Items and Listing etc
+app.use("/api", require("./routes/itemsRoutes"))
+
+
+
+
 app.listen(PORT, ()=> {
     console.log(`Listening on PORT ${PORT}`)
 })
