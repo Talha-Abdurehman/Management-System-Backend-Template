@@ -16,7 +16,9 @@ ConnectDB()
 app.use("/api", require("./routes/itemsRoutes"))
 
 
-
+app.get("/", (req, res) => {
+    res.send("<h1>Current Status: Running</h1>")
+})
 
 app.listen(PORT, ()=> {
     console.log(`Listening on PORT ${PORT}`)
