@@ -1,3 +1,4 @@
+const { json } = require("express");
 const Item = require("../models/ItemSchema")
 
 exports.createItem = async(req, res) => {
@@ -23,3 +24,44 @@ exports.deleteItemById = async(req, res) => {
         res.status.json(error);
     }
 }
+
+exports.fetchAllItems = async(req, res) => {
+    try {
+        const result = await Item.find();
+        if(!result) return res.status(404).json({Message: "Feels Empty!"})
+        res.json(result)
+
+    }
+    catch(error) {
+        res.status(500).json(error)
+    }
+    
+}
+
+exports.fetchById = async(req, res) => {
+    try {
+        const {id} = req.params;
+        const result = await Item.findById(id);
+        if(!result) return res.status(404).json({Message: "Item Not Found"})
+        res.json(result)
+    }
+
+    catch(error) {
+        res.status(500).json({error: "An Error Occurred"})
+    }
+}
+
+exports.updateById = async (req, res) => {
+    try {
+        const {id} = req.params
+        const result = await Item.findByIdAndUpdate(id, req.body, {
+            new: true,
+            runValidators: true
+        });
+        if(!result) return res.status(404).json({Message: "Item Not Found"})
+        res.status(200).json({Message: "Updated Successfully"})
+    }
+
+    catch (error) {return res.status(500).json({error: "An Error Occurred"})}
+}
+
