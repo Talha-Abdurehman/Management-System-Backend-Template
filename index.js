@@ -1,5 +1,5 @@
 const express = require("express")
-const ConnectDB = require("./db/connection")
+const ConnectDB = require("./db/mongodb.connection")
 const redisClient = require('./db/redis.connection')
 const dotenv = require("dotenv")
 
@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 3000
 ConnectDB()
 
 // API Routes for Items and Listing etc
-app.use("/api", require("./routes/itemsRoutes"))
+app.use("/api/v1", require("./routes/itemsRoutes"))
 
 
 app.get("/", (req, res) => {

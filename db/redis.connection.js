@@ -1,23 +1,12 @@
-const { createClient } = require('redis')
-const dotenv = require('dotenv')
-dotenv.config()
+const { response } = require('express');
+const Redis = require('ioredis')
 
-const redisClient = createClient({
-    url: process.env.REDIS_URL,
+const redisClient = new Redis({
+    host: process.env.OCI_REDIS_PORT,
+    port: 6379,
 });
 
-redisClient.on("error", (err)=> {
-    console.log("Error Connectig to Redis: ", err)
-});
-
-(async () => {
-    try {
-        await redisClient.connect();
-        console.log("Connected to redis");
-    }
-    catch(err){
-        console.log("Error Connecting to redis: ", err);
-    }
-})();
+redisClient.ping().then(response => console.log("Connected to Redis", response))
+.catch(error => console.error("redis Connection failed: ", error))
 
 module.exports = redisClient;
