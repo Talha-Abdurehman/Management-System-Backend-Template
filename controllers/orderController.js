@@ -18,9 +18,9 @@ exports.getOrder = async (req, res) => {
     if (!data) {
       return res.status(404).json({ Message: "Not found!" });
     }
-    res.json(data).status(200).json({ Message: "Fetched Successfully" });
+    res.json(data);
   } catch (err) {
-    res.status().json({ Message: `The Following error occured: ${err}` });
+    res.status(500).json({ Message: `The Following error occured: ${err}` });
   }
 };
 
