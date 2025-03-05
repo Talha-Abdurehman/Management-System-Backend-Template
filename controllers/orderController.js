@@ -8,7 +8,7 @@ exports.createOrder = async (req, res) => {
     await newOrder.save();
     res.status(201).json({ Message: "Created Successfully" });
   } catch (err) {
-    res.error.json({ message: `Error Message: ${err}` });
+    res.status(500).json({ message: `Error Message: ${err}` });
   }
 };
 
