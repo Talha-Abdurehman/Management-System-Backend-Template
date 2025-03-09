@@ -6,7 +6,7 @@ const OrdersSchema = mongoose.Schema(
     location: { type: String },
     phone_num: { type: Number },
     invoice_id: { type: String, required: true, unique: true },
-    product_name: { type: String, required: true },
+    product_name: [{ type: String, required: true }],
     product_category: { type: String, required: true },
     product_quantity: { type: Number, required: true },
     product_price: { type: Number, required: true },
