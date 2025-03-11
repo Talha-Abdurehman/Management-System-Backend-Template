@@ -15,13 +15,13 @@ const OrdersSchema = mongoose.Schema(
     invoice_id: { type: String, required: true, unique: true },
     products: { type: [ProductItemSchema], required: true },
     payment_method: { type: String, enum: ["Cash", "Card", "Online Payment"] },
-    // Total price will be calculated automatically
-    total_price: { type: Number, required: true },
+    // Remove "required: true" here:
+    total_price: { type: Number }, 
   },
   { timestamps: true }
 );
 
-// Calculate total_price before saving the order
+// Pre-save hook to calculate total_price
 OrdersSchema.pre("save", function (next) {
   this.total_price = this.products.reduce(
     (total, product) => total + product.product_price * product.product_quantity,
