@@ -19,6 +19,9 @@ app.use("/api/v1", require("./routes/itemsRoutes"));
 // API Routes for Orders / Invoices
 app.use("/api/v1", require("./routes/orderRoutes"));
 
+// API Routes for Business History
+app.use("/api/v1", require("./routes/BusinessHistoryRoutes"));
+
 //===============================================================================
 
 app.get("/", (req, res) => {

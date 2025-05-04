@@ -7,7 +7,7 @@ const ProductItemSchema = new mongoose.Schema({
   product_price: { type: Number, required: true },
 });
 
-const OrdersSchema = mongoose.Schema(
+const OrdersSchema = new mongoose.Schema(
   {
     business_name: { type: String },
     location: { type: String },
@@ -16,7 +16,7 @@ const OrdersSchema = mongoose.Schema(
     products: { type: [ProductItemSchema], required: true },
     payment_method: { type: String, enum: ["Cash", "Card", "Online Payment"] },
     // Remove "required: true" here:
-    total_price: { type: Number }, 
+    total_price: { type: Number },
   },
   { timestamps: true }
 );
@@ -24,7 +24,8 @@ const OrdersSchema = mongoose.Schema(
 // Pre-save hook to calculate total_price
 OrdersSchema.pre("save", function (next) {
   this.total_price = this.products.reduce(
-    (total, product) => total + product.product_price * product.product_quantity,
+    (total, product) =>
+      total + product.product_price * product.product_quantity,
     0
   );
   next();
