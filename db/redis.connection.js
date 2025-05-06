@@ -9,7 +9,6 @@ const REDIS_PORT = parseInt(process.env.REDIS_PORT, 10) || 6379; // Default port
 if (!process.env.REDIS_HOST && !process.env.OCI_REDIS_HOST) { // Check if OCI_REDIS_HOST was the intended var
     console.warn("Warning: REDIS_HOST is not defined. Defaulting to localhost. If using OCI, set OCI_REDIS_HOST or REDIS_HOST.");
 }
-// Prioritize OCI_REDIS_HOST if it was the intended variable from the original code
 const effectiveHost = process.env.OCI_REDIS_HOST || REDIS_HOST;
 
 
@@ -19,7 +18,6 @@ const redisClient = new Redis({
     // Add other options like password if needed:
     // password: process.env.REDIS_PASSWORD,
     retryStrategy: (times) => {
-        // Exponential backoff for retries
         const delay = Math.min(times * 50, 2000); // Max 2 seconds
         console.log(`Redis: Retrying connection in ${delay}ms (attempt ${times})`);
         return delay;
