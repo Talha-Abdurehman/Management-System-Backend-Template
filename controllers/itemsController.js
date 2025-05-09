@@ -6,7 +6,15 @@ exports.createItem = async (req, res) => {
     await newItem.save();
     res.status(201).json(newItem);
   } catch (error) {
-    res.status(400).json({ error });
+    console.error("Error creating item:", error);
+    if (error.code === 11000 && error.keyPattern && error.keyPattern.name) {
+      return res
+        .status(400)
+        .json({ message: `Item with name '${req.body.name}' already exists.` });
+    }
+    res
+      .status(400)
+      .json({ message: error.message || "Failed to create item" });
   }
 };
 
@@ -15,19 +23,27 @@ exports.deleteItemById = async (req, res) => {
     const { id } = req.params;
     const result = await Item.findByIdAndDelete(id);
     if (!result) return res.status(404).json({ message: "Item not found" });
-    else res.json({ message: "Item deleted successfully" });
+    res.json({ message: "Item deleted successfully" });
   } catch (error) {
-    res.status.json(error);
+    console.error(`Error deleting item ${req.params.id}:`, error);
+    res
+      .status(500)
+      .json({ message: error.message || "Failed to delete item" });
   }
 };
 
 exports.fetchAllItems = async (req, res) => {
   try {
     const result = await Item.find();
-    if (!result) return res.status(404).json({ Message: "Feels Empty!" });
+    if (!result || result.length === 0) {
+      return res.status(404).json({ Message: "No items found. Feels Empty!" });
+    }
     res.json(result);
   } catch (error) {
-    res.status(500).json(error);
+    console.error("Error fetching all items:", error);
+    res
+      .status(500)
+      .json({ message: error.message || "Failed to fetch items" });
   }
 };
 
@@ -38,7 +54,10 @@ exports.fetchById = async (req, res) => {
     if (!result) return res.status(404).json({ Message: "Item Not Found" });
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: `An Error Occurred: ${error}` });
+    console.error(`Error fetching item by ID ${req.params.id}:`, error);
+    res
+      .status(500)
+      .json({ message: `An Error Occurred: ${error.message}` });
   }
 };
 
@@ -50,8 +69,16 @@ exports.updateById = async (req, res) => {
       runValidators: true,
     });
     if (!result) return res.status(404).json({ Message: "Item Not Found" });
-    res.status(200).json({ Message: "Updated Successfully" });
+    res.status(200).json({ Message: "Updated Successfully", item: result });
   } catch (error) {
-    return res.status(500).json({ error: `An Error Occurred ${error}` });
+    console.error(`Error updating item ${req.params.id}:`, error);
+    if (error.code === 11000 && error.keyPattern && error.keyPattern.name) {
+      return res
+        .status(400)
+        .json({ message: `Item with name '${req.body.name}' already exists.` });
+    }
+    return res
+      .status(500)
+      .json({ message: `An Error Occurred: ${error.message}` });
   }
 };
