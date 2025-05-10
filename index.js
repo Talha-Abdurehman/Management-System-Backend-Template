@@ -13,8 +13,11 @@ const PORT = process.env.PORT || 3000;
 ConnectDB();
 
 //===============================================================================
+
 // Authentication Routes
 app.use("/api/v1/auth", require("./routes/AuthRoutes"));
+
+//===============================================================================
 
 // API Routes for Items and Listing etc
 app.use("/api/v1", authMiddleware, require("./routes/itemsRoutes"));
@@ -24,6 +27,9 @@ app.use("/api/v1", authMiddleware, require("./routes/orderRoutes"));
 
 // API Routes for Business History
 app.use("/api/v1", authMiddleware, require("./routes/BusinessHistoryRoutes"));
+
+// API Routes for Workers
+app.use("/api/v1", authMiddleware, require("./routes/workerRoutes"));
 
 //===============================================================================
 
