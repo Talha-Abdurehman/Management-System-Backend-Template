@@ -1,6 +1,7 @@
 const express = require("express");
 const ConnectDB = require("./db/mongodb.connection");
 const dotenv = require("dotenv");
+const authMiddleware = require("./middleware/authMiddleware");
 
 const app = express();
 app.use(express.json());
@@ -13,14 +14,22 @@ ConnectDB();
 
 //===============================================================================
 
+// Authentication Routes
+app.use("/api/v1/auth", require("./routes/AuthRoutes"));
+
+//===============================================================================
+
 // API Routes for Items and Listing etc
-app.use("/api/v1", require("./routes/itemsRoutes"));
+app.use("/api/v1", authMiddleware, require("./routes/itemsRoutes"));
 
 // API Routes for Orders / Invoices
-app.use("/api/v1", require("./routes/orderRoutes"));
+app.use("/api/v1", authMiddleware, require("./routes/orderRoutes"));
 
 // API Routes for Business History
-app.use("/api/v1", require("./routes/BusinessHistoryRoutes"));
+app.use("/api/v1", authMiddleware, require("./routes/BusinessHistoryRoutes"));
+
+// API Routes for Employees
+app.use("/api/v1", authMiddleware, require("./routes/employeeRoutes"));
 
 //===============================================================================
 

@@ -11,14 +11,14 @@ const DaySchema = new mongoose.Schema(
 
 const MonthSchema = new mongoose.Schema(
   {
-    month: { type: Number },
+    month: { type: Number, required: true },
     days: [DaySchema],
   },
   { _id: false }
 );
 
 const BusinessHistorySchema = new mongoose.Schema({
-  year: { type: Number },
+  year: { type: Number, required: true, unique: true },
   months: [MonthSchema],
 });
 
