@@ -14,7 +14,11 @@ exports.createUser = async (req, res) => {
       return res.status(400).json({ message: "User Already Exists" });
 
     const hashedPass = await bcrypt.hash(password, 10);
-    const newUser = new User({ username, password: hashedPass, isAdmin: false });
+    const newUser = new User({
+      username,
+      password: hashedPass,
+      isAdmin: false,
+    });
     await newUser.save();
     res.status(201).json({ message: "User Created Successfully" });
   } catch (e) {
@@ -33,7 +37,7 @@ exports.getUser = async (req, res) => {
 
     const tokenPayload = {
       userId: user._id,
-      isAdmin: user.isAdmin
+      isAdmin: user.isAdmin,
     };
     const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, {
       expiresIn: "1h",
@@ -58,7 +62,9 @@ exports.deleteUserById = async (req, res) => {
     const { userId } = req.params;
 
     if (req.user.userId === userId) {
-      return res.status(400).json({ message: "Cannot delete your own account." });
+      return res
+        .status(400)
+        .json({ message: "Cannot delete your own account." });
     }
 
     const deletedUser = await User.findByIdAndDelete(userId);
