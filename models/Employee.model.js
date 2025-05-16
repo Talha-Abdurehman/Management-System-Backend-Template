@@ -24,6 +24,7 @@ const EmployeeSchema = mongoose.Schema(
     phone: { type: String },
     salary: { type: Number, required: true },
     attendance: [AttendanceSchema],
+    imgUrl: { type: String },
   },
   { timestamps: true }
 );
