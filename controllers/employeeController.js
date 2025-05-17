@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 
 exports.createEmployee = async (req, res) => {
   try {
-    const { name, cnic, phone, salary } = req.body;
+    const { name, cnic, phone, salary, imgUrl } = req.body;
     if (!name || !cnic || !salary) {
       return res
         .status(400)
@@ -17,14 +17,13 @@ exports.createEmployee = async (req, res) => {
         .json({ message: `Employee with CNIC ${cnic} already exists.` });
     }
 
-    const newEmployee = new Employee({ name, cnic, phone, salary });
+    const newEmployee = new Employee({ name, cnic, phone, salary, imgUrl: imgUrl || null });
     await newEmployee.save();
     res.status(201).json({
       message: "Employee created successfully",
       employee: newEmployee,
     });
   } catch (error) {
-    console.error("Error creating employee:", error);
     res.status(500).json({ message: "Failed to create employee" });
   }
 };
@@ -62,7 +61,7 @@ exports.updateEmployee = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid employee ID format" });
     }
-    const { name, cnic, phone, salary } = req.body;
+    const { name, cnic, phone, salary, imgUrl } = req.body;
 
     if (cnic) {
       const existingEmployee = await Employee.findOne({
@@ -76,9 +75,15 @@ exports.updateEmployee = async (req, res) => {
       }
     }
 
+    const updateFields = { name, cnic, phone, salary };
+    if (imgUrl !== undefined) { // Allow setting imgUrl to null or a new value
+      updateFields.imgUrl = imgUrl;
+    }
+
+
     const updatedEmployee = await Employee.findByIdAndUpdate(
       id,
-      { name, cnic, phone, salary },
+      { $set: updateFields }, // Use $set to only update provided fields
       { new: true, runValidators: true }
     );
 
@@ -90,7 +95,6 @@ exports.updateEmployee = async (req, res) => {
       employee: updatedEmployee,
     });
   } catch (error) {
-    console.error(`Error updating employee ${req.params.id}:`, error);
     res.status(500).json({ message: "Failed to update employee" });
   }
 };
@@ -140,9 +144,8 @@ exports.addAttendance = async (req, res) => {
 
     if (existingAttendance) {
       return res.status(400).json({
-        message: `Attendance for ${
-          attendanceDate.toISOString().split("T")[0]
-        } already exists. Use PUT to update.`,
+        message: `Attendance for ${attendanceDate.toISOString().split("T")[0]
+          } already exists. Use PUT to update.`,
       });
     }
 
