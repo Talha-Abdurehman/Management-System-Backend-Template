@@ -1,7 +1,4 @@
 const mongoose = require("mongoose");
-const OrdersSchema = require("../models/Orders.model");
-
-/** @type {import('mongoose').Schema} */
 
 const CustomersSchema = new mongoose.Schema(
   {
@@ -11,7 +8,12 @@ const CustomersSchema = new mongoose.Schema(
     cAddress: { type: String },
     cPaidAmount: { type: Number, required: true },
     cOustandingAmt: { type: Number, required: true },
-    orders: { type: [OrdersSchema] },
+    orders: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Orders",
+      },
+    ],
   },
   { timestamps: true }
 );

@@ -17,6 +17,12 @@ const {
 
 router.get("/customers", getAllCustomers);
 router.get("/customers/:id", getCustomerById);
+router.get("/customers/:id/orders", getCustomerOrders);
 router.post("/customers", createCustomer);
+router.put("/customers/:id/orders", addOrderToCustomer);
 router.put("/customers/:id", updateCustomer);
+router.put("/customers/:id/orders", updateCustomerOrder);
 router.delete("/customers/:id", deleteCustomer);
+router.delete("/customers/:id/orders");
+
+module.exports = router;
