@@ -1,30 +1,16 @@
 const mongoose = require("mongoose");
 
-const ProductItemSchema = new mongoose.Schema(
-  {
-    product_name: { type: String, required: true },
-    product_category: { type: String, required: true },
-    product_quantity: { type: Number, required: true, min: 1 },
-    retail_price: { type: Number, required: true, min: 0 }, // Original retail price
-    wholesale_price: { type: Number, min: 0 }, // Optional wholesale price
-    discount_amount: { type: Number, default: 0, min: 0 }, // Fixed discount amount (not percentage)
-    product_price: { type: Number, required: true, min: 0 }, // Final price after discount
-    price_type: {
-      type: String,
-      enum: ["retail", "wholesale"],
-      default: "retail",
-    }, // Track which type of price is being used
-  },
-  { _id: false }
-);
-
 const OrdersSchema = new mongoose.Schema(
   {
     business_name: { type: String },
     location: { type: String },
     phone_num: { type: String }, // Changed to String for phone numbers with leading zeros/country codes
     invoice_id: { type: String, required: true, unique: true },
-    products: { type: [ProductItemSchema], required: true },
+    products: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: "Item",
+      required: true,
+    },
     payment_method: { type: String, enum: ["Cash", "Card", "Online Payment"] },
     subtotal: { type: Number, min: 0 }, // Subtotal before discounts
     total_discount: { type: Number, default: 0, min: 0 }, // Total discount across all items
@@ -33,17 +19,6 @@ const OrdersSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-
-// Helper function to calculate final product price based on retail/wholesale and discount
-ProductItemSchema.pre("save", function (next) {
-  // Determine base price based on price type
-  const basePrice =
-    this.price_type === "wholesale" ? this.wholesale_price : this.retail_price;
-
-  // Apply discount if any
-  this.product_price = Math.max(0, basePrice - this.discount_amount);
-  next();
-});
 
 // Pre-save hook to calculate totals for the entire order
 OrdersSchema.pre("save", function (next) {
