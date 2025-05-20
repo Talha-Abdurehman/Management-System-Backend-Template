@@ -31,6 +31,9 @@ app.use("/api/v1", authMiddleware, require("./routes/BusinessHistoryRoutes"));
 // API Routes for Employees
 app.use("/api/v1", authMiddleware, require("./routes/employeeRoutes"));
 
+// API Routes for Customers
+app.use("/api/v1", authMiddleware, require("./routes/customersRoutes"));
+
 //===============================================================================
 
 app.get("/", (req, res) => {

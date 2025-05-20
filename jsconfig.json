@@ -1,4 +1,7 @@
 {
+  "typeAcquisition": {
+    "include": ["mongoose", "jest", "supertest"]
+  },
   "compilerOptions": {
     "module": "ESNext",
     "moduleResolution": "Bundler",
