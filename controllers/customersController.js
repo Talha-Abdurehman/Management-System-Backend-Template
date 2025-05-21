@@ -11,7 +11,7 @@ const CustomerController = {
    */
   createCustomer: async (req, res) => {
     try {
-      const { cName, cNIC, cPhone, cAddress, cPaidAmount, cOustandingAmt } =
+      const { cName, cNIC, cPhone, cAddress, cPaidAmount, cOutstandingAmt } =
         req.body;
 
       // Check for existing customer with same NIC or phone
@@ -32,7 +32,7 @@ const CustomerController = {
         cPhone,
         cAddress,
         cPaidAmount: cPaidAmount || 0,
-        cOustandingAmt: cOustandingAmt || 0,
+        cOutstandingAmt: cOutstandingAmt || 0,
         orders: [],
       });
 
@@ -108,7 +108,7 @@ const CustomerController = {
    */
   updateCustomer: async (req, res) => {
     try {
-      const { cName, cNIC, cPhone, cAddress, cPaidAmount, cOustandingAmt } =
+      const { cName, cNIC, cPhone, cAddress, cPaidAmount, cOutstandingAmt } =
         req.body;
 
       // Check for existing customer with same NIC or phone (excluding current customer)
@@ -141,7 +141,7 @@ const CustomerController = {
           cPhone,
           cAddress,
           cPaidAmount,
-          cOustandingAmt,
+          cOutstandingAmt,
         },
         { new: true, runValidators: true }
       );
@@ -246,7 +246,7 @@ const CustomerController = {
 
       // Update outstanding amount based on order total
       if (newOrder.total_price > 0) {
-        customer.cOustandingAmt += newOrder.total_price;
+        customer.cOutstandingAmt += newOrder.total_price;
       }
 
       await customer.save();
@@ -302,8 +302,8 @@ const CustomerController = {
 
       // Adjust outstanding amount based on order total difference
       if (customer.orders[orderIndex].total_price !== oldOrderTotal) {
-        customer.cOustandingAmt =
-          customer.cOustandingAmt -
+        customer.cOutstandingAmt =
+          customer.cOutstandingAmt -
           oldOrderTotal +
           customer.orders[orderIndex].total_price;
       }
@@ -352,7 +352,7 @@ const CustomerController = {
 
       // Adjust outstanding amount
       const orderTotal = customer.orders[orderIndex].total_price || 0;
-      customer.cOustandingAmt -= orderTotal;
+      customer.cOutstandingAmt -= orderTotal;
 
       // Remove order
       customer.orders.splice(orderIndex, 1);
@@ -398,9 +398,9 @@ const CustomerController = {
 
       // Update paid and outstanding amounts
       customer.cPaidAmount += Number(paymentAmount);
-      customer.cOustandingAmt = Math.max(
+      customer.cOutstandingAmt = Math.max(
         0,
-        customer.cOustandingAmt - Number(paymentAmount)
+        customer.cOutstandingAmt - Number(paymentAmount)
       );
 
       await customer.save();
@@ -410,7 +410,7 @@ const CustomerController = {
         message: "Customer payment updated successfully",
         data: {
           cPaidAmount: customer.cPaidAmount,
-          cOustandingAmt: customer.cOustandingAmt,
+          cOutstandingAmt: customer.cOutstandingAmt,
         },
       });
     } catch (error) {
@@ -466,10 +466,10 @@ const CustomerController = {
   getCustomersWithOutstandingBalance: async (req, res) => {
     try {
       const customers = await Customer.find({
-        cOustandingAmt: { $gt: 0 },
+        cOutstandingAmt: { $gt: 0 },
       })
         .select("-orders")
-        .sort({ cOustandingAmt: -1 });
+        .sort({ cOutstandingAmt: -1 });
 
       res.status(200).json({
         success: true,

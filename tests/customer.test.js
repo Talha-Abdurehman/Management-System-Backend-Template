@@ -39,7 +39,7 @@ const sampleCustomer = {
   cPhone: "1234567890",
   cAddress: "123 Test Street",
   cPaidAmount: 500,
-  cOustandingAmt: 100,
+  cOutstandingAmt: 100,
 };
 
 const sampleOrder = {
@@ -222,7 +222,7 @@ describe("CustomerController", () => {
   describe("addOrderToCustomer", () => {
     it("should add order to customer", async () => {
       const customer = await Customer.create(sampleCustomer);
-      const initialOutstanding = customer.cOustandingAmt;
+      const initialOutstanding = customer.cOutstandingAmt;
 
       const response = await request(app)
         .post(`/api/customers/${customer._id}/orders`)
@@ -234,7 +234,7 @@ describe("CustomerController", () => {
 
       // Verify customer's outstanding amount was updated
       const updatedCustomer = await Customer.findById(customer._id);
-      expect(updatedCustomer.cOustandingAmt).toBe(
+      expect(updatedCustomer.cOutstandingAmt).toBe(
         initialOutstanding + sampleOrder.total_price
       );
     });
@@ -249,7 +249,7 @@ describe("CustomerController", () => {
       });
 
       const orderId = customer.orders[0]._id;
-      const initialOutstanding = customer.cOustandingAmt;
+      const initialOutstanding = customer.cOutstandingAmt;
       const updatedOrderData = {
         total_price: 200, // Changed from 180
         payment_method: "Card",
@@ -269,7 +269,7 @@ describe("CustomerController", () => {
       const updatedCustomer = await Customer.findById(customer._id);
       const priceDifference =
         updatedOrderData.total_price - sampleOrder.total_price;
-      expect(updatedCustomer.cOustandingAmt).toBe(
+      expect(updatedCustomer.cOutstandingAmt).toBe(
         initialOutstanding + priceDifference
       );
     });
@@ -296,7 +296,7 @@ describe("CustomerController", () => {
       });
 
       const orderId = customer.orders[0]._id;
-      const initialOutstanding = customer.cOustandingAmt;
+      const initialOutstanding = customer.cOutstandingAmt;
 
       const response = await request(app).delete(
         `/api/customers/${customer._id}/orders/${orderId}`
@@ -308,7 +308,7 @@ describe("CustomerController", () => {
       // Verify order was removed and outstanding amount adjusted
       const updatedCustomer = await Customer.findById(customer._id);
       expect(updatedCustomer.orders.length).toBe(0);
-      expect(updatedCustomer.cOustandingAmt).toBe(
+      expect(updatedCustomer.cOutstandingAmt).toBe(
         initialOutstanding - sampleOrder.total_price
       );
     });
@@ -318,7 +318,7 @@ describe("CustomerController", () => {
     it("should update customer payment amounts", async () => {
       const customer = await Customer.create(sampleCustomer);
       const initialPaid = customer.cPaidAmount;
-      const initialOutstanding = customer.cOustandingAmt;
+      const initialOutstanding = customer.cOutstandingAmt;
       const paymentAmount = 50;
 
       const response = await request(app)
@@ -331,7 +331,7 @@ describe("CustomerController", () => {
       // Verify payment updates
       const updatedCustomer = await Customer.findById(customer._id);
       expect(updatedCustomer.cPaidAmount).toBe(initialPaid + paymentAmount);
-      expect(updatedCustomer.cOustandingAmt).toBe(
+      expect(updatedCustomer.cOutstandingAmt).toBe(
         initialOutstanding - paymentAmount
       );
     });
@@ -339,7 +339,7 @@ describe("CustomerController", () => {
     it("should handle payment greater than outstanding amount", async () => {
       const customer = await Customer.create({
         ...sampleCustomer,
-        cOustandingAmt: 30,
+        cOutstandingAmt: 30,
       });
       const initialPaid = customer.cPaidAmount;
       const paymentAmount = 50; // More than outstanding
@@ -353,7 +353,7 @@ describe("CustomerController", () => {
       // Verify payment updates (outstanding should be 0, not negative)
       const updatedCustomer = await Customer.findById(customer._id);
       expect(updatedCustomer.cPaidAmount).toBe(initialPaid + paymentAmount);
-      expect(updatedCustomer.cOustandingAmt).toBe(0);
+      expect(updatedCustomer.cOutstandingAmt).toBe(0);
     });
 
     it("should reject invalid payment amounts", async () => {
@@ -418,7 +418,7 @@ describe("CustomerController", () => {
         cName: "Zero Balance",
         cNIC: "111222333",
         cPhone: "1112223333",
-        cOustandingAmt: 0,
+        cOutstandingAmt: 0,
       });
 
       const response = await request(app).get("/api/customers/outstanding");
@@ -426,7 +426,7 @@ describe("CustomerController", () => {
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
       expect(response.body.data.length).toBe(1);
-      expect(response.body.data[0].cOustandingAmt).toBeGreaterThan(0);
+      expect(response.body.data[0].cOutstandingAmt).toBeGreaterThan(0);
     });
   });
 });
