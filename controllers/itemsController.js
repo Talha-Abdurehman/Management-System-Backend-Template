@@ -6,12 +6,12 @@ exports.createItem = async (req, res) => {
     await newItem.save();
     res.status(201).json(newItem);
   } catch (error) {
-    console.error("Error creating item:", error);
-    if (error.code === 11000 && error.keyPattern && error.keyPattern.name) {
+    if (error.code === 11000 && error.keyPattern && error.keyPattern.product_name) {
       return res
         .status(400)
-        .json({ message: `Item with name '${req.body.name}' already exists.` });
+        .json({ message: `Item with product name '${req.body.product_name}' already exists.` });
     }
+    console.error("Error creating item:", error);
     res
       .status(400)
       .json({ message: error.message || "Failed to create item" });
@@ -71,12 +71,12 @@ exports.updateById = async (req, res) => {
     if (!result) return res.status(404).json({ Message: "Item Not Found" });
     res.status(200).json({ Message: "Updated Successfully", item: result });
   } catch (error) {
-    console.error(`Error updating item ${req.params.id}:`, error);
-    if (error.code === 11000 && error.keyPattern && error.keyPattern.name) {
+    if (error.code === 11000 && error.keyPattern && error.keyPattern.product_name) {
       return res
         .status(400)
-        .json({ message: `Item with name '${req.body.name}' already exists.` });
+        .json({ message: `Item with product name '${req.body.product_name}' already exists.` });
     }
+    console.error(`Error updating item ${req.params.id}:`, error);
     return res
       .status(500)
       .json({ message: `An Error Occurred: ${error.message}` });

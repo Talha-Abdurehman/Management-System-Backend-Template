@@ -151,35 +151,45 @@ OrdersSchema.methods.applyWholesalePricing = function () {
 
 // ---- NEW METHOD TO ADD A PAYMENT TO THIS ORDER ----
 OrdersSchema.methods.addPayment = async function (paymentDetails) {
-  // paymentDetails should be an object like:
-  // { amount: Number, payment_method_used: String, notes: String (optional) }
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    this.payments_received.push({
+      amount: paymentDetails.amount,
+      payment_method_used: paymentDetails.payment_method_used,
+      notes: paymentDetails.notes,
+      payment_date: paymentDetails.payment_date || new Date(),
+    });
 
-  this.payments_received.push({
-    amount: paymentDetails.amount,
-    payment_method_used: paymentDetails.payment_method_used,
-    notes: paymentDetails.notes,
-    payment_date: new Date(), // Or allow passing a specific date
-  });
+    await this.save({ session });
 
-  // The pre-save hook will recalculate order_paid_amount and order_outstanding_amount
-  await this.save(); // This will trigger the pre-save hook
+    const Customer = mongoose.model("Customers");
+    const customer = await Customer.findById(this.customer).session(session);
 
-  // Now, update the customer's overall balance
-  const Customer = mongoose.model("Customers"); // Get the Customer model
-  const customer = await Customer.findById(this.customer);
+    if (!customer) {
+      throw new Error("Customer not found for this order.");
+    }
 
-  if (!customer) {
-    throw new Error("Customer not found for this order.");
+    customer.cPaidAmount += paymentDetails.amount;
+    // Customer's outstanding amount is the sum of their orders' outstanding amounts.
+    // This specific payment reduces this order's outstanding amount.
+    // The overall customer outstanding amount should be recalculated or carefully managed.
+    // For this transaction, we are ensuring the payment reduces the direct debt from this order.
+    // A more robust solution involves recalculating customer.cOutstandingAmt based on sum of all their orders' outstanding amounts.
+    customer.cOutstandingAmt -= paymentDetails.amount;
+    if (customer.cOutstandingAmt < 0) customer.cOutstandingAmt = 0;
+
+
+    await customer.save({ session });
+
+    await session.commitTransaction();
+    return this;
+  } catch (error) {
+    await session.abortTransaction();
+    throw error; // Re-throw error to be handled by controller
+  } finally {
+    session.endSession();
   }
-
-  customer.cPaidAmount += paymentDetails.amount;
-  customer.cOutstandingAmt -= paymentDetails.amount; // Note: cOutstandingAmt should be total of all order_outstanding_amount
-
-  // if (customer.cOutstandingAmt < 0) customer.cOutstandingAmt = 0;
-
-  await customer.save();
-
-  return this; // Return the updated order
 };
 // ---- END NEW METHOD ----
 

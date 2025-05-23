@@ -39,6 +39,7 @@ async function attemptBusinessHistoryUpdate(
           },
         ],
       });
+      await historyRecord.save();
     } else {
       let monthRecord = historyRecord.months.find((m) => m.month === month);
       if (!monthRecord) {
@@ -52,7 +53,8 @@ async function attemptBusinessHistoryUpdate(
             },
           ],
         });
-        // Optional: historyRecord.months.sort((a, b) => a.month - b.month);
+        historyRecord.months.sort((a, b) => a.month - b.month); // Keep sorted
+        await historyRecord.save();
       } else {
         let dayRecord = monthRecord.days.find((d) => d.day === day);
         if (!dayRecord) {
@@ -61,14 +63,58 @@ async function attemptBusinessHistoryUpdate(
             totalProfit: profitForThisOrder,
             totalOrders: ordersInThisTransaction,
           });
-          // Optional: monthRecord.days.sort((a, b) => a.day - b.day);
+          monthRecord.days.sort((a, b) => a.day - b.day); // Keep sorted
+          await historyRecord.save();
         } else {
-          dayRecord.totalProfit += profitForThisOrder;
-          dayRecord.totalOrders += ordersInThisTransaction;
+          // Atomic update for existing day record
+          const updateResult = await BusinessHistory.updateOne(
+            {
+              year: year,
+              "months.month": month,
+              "months.days.day": day
+            },
+            {
+              $inc: {
+                "months.$[m].days.$[d].totalProfit": profitForThisOrder,
+                "months.$[m].days.$[d].totalOrders": ordersInThisTransaction
+              }
+            },
+            {
+              arrayFilters: [
+                { "m.month": month },
+                { "d.day": day }
+              ]
+            }
+          );
+          if (updateResult.matchedCount === 0 || updateResult.modifiedCount === 0) {
+            // This might happen if the record was modified between findOne and updateOne.
+            // Or if arrayFilters didn't match (shouldn't happen if dayRecord was found).
+            // For a robust solution, this case might need a retry of the whole logic or a more complex upsert.
+            // For now, log a warning if the atomic update didn't proceed as expected.
+            console.warn(`Atomic update for BusinessHistory ${year}-${month}-${day} did not modify. Matched: ${updateResult.matchedCount}, Modified: ${updateResult.modifiedCount}. Re-fetching and trying save (less atomic).`);
+            // Fallback to less atomic save for this specific case, or throw to retry.
+            // To keep it simple for this fix, we will re-fetch and save if atomic fails.
+            const fallbackRecord = await BusinessHistory.findOne({ year: year });
+            const fbMonthRecord = fallbackRecord.months.find(m => m.month === month);
+            if (fbMonthRecord) {
+              const fbDayRecord = fbMonthRecord.days.find(d => d.day === day);
+              if (fbDayRecord) {
+                fbDayRecord.totalProfit += profitForThisOrder;
+                fbDayRecord.totalOrders += ordersInThisTransaction;
+                await fallbackRecord.save();
+              } else {
+                // Day disappeared, log error or re-add
+                throw new Error(`Day ${day} disappeared during fallback update for BusinessHistory ${year}-${month}.`);
+              }
+            } else {
+              // Month disappeared, log error or re-add
+              throw new Error(`Month ${month} disappeared during fallback update for BusinessHistory ${year}.`);
+            }
+
+          }
         }
       }
     }
-    await historyRecord.save();
     console.log(
       `Business history updated successfully for ${year}-${month}-${day} (Attempt ${attempt})`
     );
@@ -102,8 +148,6 @@ async function attemptBusinessHistoryUpdate(
             10
           )}. Profit: ${profitForThisOrder}, Orders: ${ordersInThisTransaction}. Please investigate manually.`
       );
-      // In a production system, you might log this to a persistent error store,
-      // a monitoring system, or a dead-letter queue.
     }
   }
 }
