@@ -1,6 +1,6 @@
 const cloudinary = require("cloudinary").v2;
 const dotenv = require("dotenv");
-dotenv.config();
+// dotenv.config(); // Removed, called in index.js
 
 const CLOUDINARY_NAME = process.env.CLOUDINARY_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;

@@ -1,31 +1,32 @@
 const mongoose = require("mongoose");
+const { ATTENDANCE_STATUS, PAYMENT_STATUS } = require('../utils/constants');
 
 const AttendanceSchema = new mongoose.Schema(
   {
     date: { type: Date, required: true },
     status: {
       type: String,
-      enum: ["present", "halfDay", "absent"],
+      enum: Object.values(ATTENDANCE_STATUS),
       required: true,
     },
     payment: {
       type: String,
-      enum: ["full", "half", "unpaid"],
+      enum: Object.values(PAYMENT_STATUS),
       required: true,
     },
   },
   { _id: false }
 );
 
-const UserSchema = new mongoose.Schema({ // Renamed to UserSchema for consistency
+const UserSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
+  password: { type: String, required: true, select: false }, // Typically hide password by default
   isAdmin: { type: Boolean, default: false },
   imgUrl: { type: String },
   cnic: {
     type: String,
     unique: true,
-    sparse: true // Allows multiple nulls but cnic value itself must be unique
+    sparse: true
   },
   salary: { type: Number },
   attendance: [AttendanceSchema],

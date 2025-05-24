@@ -1,544 +1,340 @@
 const Customer = require("../models/Customers.model");
-const Order = require("../models/Orders.model"); // Added Order model
+const Order = require("../models/Orders.model");
 const mongoose = require("mongoose");
+const AppError = require('../utils/AppError');
 
 /**
  * Customer Controller
- * Provides methods for managing customer data and their referenced orders
  */
 const CustomerController = {
-  /**
-   * Create a new customer
-   * @route POST /api/customers
-   */
-  createCustomer: async (req, res) => {
+  createCustomer: async (req, res, next) => {
     try {
-      const { cName, cNIC, cPhone, cAddress, cPaidAmount, cOutstandingAmt, cImgUrl } =
-        req.body;
+      const { cName, cNIC, cPhone, cAddress, cImgUrl } = req.body;
 
-      const existingCustomer = await Customer.findOne({
-        $or: [{ cNIC }, { cPhone }],
-      });
+      if (!cName || !cNIC || !cPhone) {
+        return next(new AppError("Customer Name, CNIC, and Phone are required.", 400));
+      }
 
+      const existingCustomer = await Customer.findOne({ $or: [{ cNIC }, { cPhone }] });
       if (existingCustomer) {
-        return res.status(400).json({
-          success: false,
-          message: "Customer with this NIC or phone number already exists",
-        });
+        return next(new AppError("Customer with this NIC or phone number already exists.", 400));
       }
 
       const customer = new Customer({
-        cName,
-        cNIC,
-        cPhone,
-        cAddress,
-        cPaidAmount: cPaidAmount || 0,
-        cOutstandingAmt: cOutstandingAmt || 0,
+        cName, cNIC, cPhone, cAddress,
+        cPaidAmount: 0, // Initialized
+        cOutstandingAmt: 0, // Initialized
         cOrders: [],
         cImgUrl: cImgUrl || null,
       });
-
       await customer.save();
-
-      res.status(201).json({
-        success: true,
-        message: "Customer created successfully",
-        data: customer,
-      });
+      res.status(201).json({ success: true, message: "Customer created successfully", data: customer });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error creating customer",
-        error: error.message,
-      });
+      if (error.name === 'ValidationError') return next(new AppError(error.message, 400));
+      if (error.code === 11000) return next(new AppError(`Duplicate value for ${Object.keys(error.keyValue)[0]}.`, 400));
+      next(new AppError("Error creating customer: " + error.message, 500));
     }
   },
 
-  /**
-   * Get all customers
-   * @route GET /api/customers
-   */
-  getAllCustomers: async (req, res) => {
+  getAllCustomers: async (req, res, next) => {
     try {
-      const customers = await Customer.find().select("-cOrders"); // Exclude cOrders details for listing
-
-      res.status(200).json({
-        success: true,
-        count: customers.length,
-        data: customers,
-      });
+      const customers = await Customer.find().select("-cOrders").sort({ createdAt: -1 });
+      res.status(200).json({ success: true, count: customers.length, data: customers });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error fetching customers",
-        error: error.message,
-      });
+      next(new AppError("Error fetching customers: " + error.message, 500));
     }
   },
 
-  /**
-   * Get customer by ID, optionally populating cOrders
-   * @route GET /api/customers/:id
-   */
-  getCustomerById: async (req, res) => {
+  getCustomerById: async (req, res, next) => {
     try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+        return next(new AppError("Invalid customer ID format.", 400));
+      }
       let query = Customer.findById(req.params.id);
       if (req.query.populateOrders === 'true') {
-        query = query.populate('cOrders');
+        query = query.populate({ path: 'cOrders', options: { sort: { createdAt: -1 } } });
       }
       const customer = await query;
-
-
-      if (!customer) {
-        return res.status(404).json({
-          success: false,
-          message: "Customer not found",
-        });
-      }
-
-      res.status(200).json({
-        success: true,
-        data: customer,
-      });
+      if (!customer) return next(new AppError("Customer not found.", 404));
+      res.status(200).json({ success: true, data: customer });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error fetching customer",
-        error: error.message,
-      });
+      next(new AppError("Error fetching customer: " + error.message, 500));
     }
   },
 
-  /**
-   * Update customer basic details
-   * @route PUT /api/customers/:id
-   */
-  updateCustomer: async (req, res) => {
+  updateCustomer: async (req, res, next) => {
     try {
-      const { cName, cNIC, cPhone, cAddress, cImgUrl } = req.body; // Payment amounts handled by separate routes
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+        return next(new AppError("Invalid customer ID format.", 400));
+      }
+      const { cName, cNIC, cPhone, cAddress, cImgUrl } = req.body;
+      const updateData = {};
+      if (cName) updateData.cName = cName;
+      if (cNIC) updateData.cNIC = cNIC;
+      if (cPhone) updateData.cPhone = cPhone;
+      if (cAddress) updateData.cAddress = cAddress;
+      if (cImgUrl !== undefined) updateData.cImgUrl = cImgUrl;
 
       if (cNIC || cPhone) {
         const queryConditions = [];
         if (cNIC) queryConditions.push({ cNIC });
         if (cPhone) queryConditions.push({ cPhone });
-
-        const existingCustomer = await Customer.findOne({
-          _id: { $ne: req.params.id },
-          $or: queryConditions,
-        });
-
+        const existingCustomer = await Customer.findOne({ _id: { $ne: req.params.id }, $or: queryConditions });
         if (existingCustomer) {
-          return res.status(400).json({
-            success: false,
-            message: "NIC or phone number already used by another customer",
-          });
+          return next(new AppError("NIC or phone number already used by another customer.", 400));
         }
       }
-      const updateData = { cName, cNIC, cPhone, cAddress };
-      if (cImgUrl !== undefined) updateData.cImgUrl = cImgUrl;
 
-
-      const customer = await Customer.findByIdAndUpdate(
-        req.params.id,
-        { $set: updateData },
-        { new: true, runValidators: true }
-      );
-
-      if (!customer) {
-        return res.status(404).json({
-          success: false,
-          message: "Customer not found",
-        });
-      }
-
-      res.status(200).json({
-        success: true,
-        message: "Customer updated successfully",
-        data: customer,
-      });
+      const customer = await Customer.findByIdAndUpdate(req.params.id, { $set: updateData }, { new: true, runValidators: true });
+      if (!customer) return next(new AppError("Customer not found.", 404));
+      res.status(200).json({ success: true, message: "Customer updated successfully.", data: customer });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error updating customer",
-        error: error.message,
-      });
+      if (error.name === 'ValidationError') return next(new AppError(error.message, 400));
+      if (error.code === 11000) return next(new AppError(`Duplicate value for ${Object.keys(error.keyValue)[0]}.`, 400));
+      next(new AppError("Error updating customer: " + error.message, 500));
     }
   },
 
-  /**
-   * Delete customer
-   * @route DELETE /api/customers/:id
-   */
-  deleteCustomer: async (req, res) => {
+  deleteCustomer: async (req, res, next) => {
+    // Note: Deleting a customer with orders can have implications.
+    // Consider business logic for handling associated orders (e.g., disassociate, archive, prevent deletion).
+    // The current implementation simply deletes the customer.
     try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+        return next(new AppError("Invalid customer ID format.", 400));
+      }
       const customer = await Customer.findById(req.params.id);
+      if (!customer) return next(new AppError("Customer not found.", 404));
 
-      if (!customer) {
-        return res.status(404).json({
-          success: false,
-          message: "Customer not found",
-        });
-      }
-
-      // Consider implications: what happens to their orders?
-      // Option 1: Prevent deletion if orders exist.
-      // Option 2: Delete/archive orders (complex).
-      // Option 3: Disassociate orders (set order.customer to null, if schema allows).
-      // For now, simple deletion. Add business logic as needed.
-      if (customer.cOrders && customer.cOrders.length > 0) {
-        // Optionally, set customer field on related orders to null or handle otherwise
-        // await Order.updateMany({ _id: { $in: customer.cOrders } }, { $unset: { customer: "" } });
-      }
+      // Example: Prevent deletion if outstanding balance exists
+      // if (customer.cOutstandingAmt > 0) {
+      //    return next(new AppError("Cannot delete customer with an outstanding balance.", 400));
+      // }
+      // Example: Disassociate orders (set order.customer to null)
+      // await Order.updateMany({ _id: { $in: customer.cOrders } }, { $unset: { customer: "" } });
 
       await Customer.findByIdAndDelete(req.params.id);
-
-
-      res.status(200).json({
-        success: true,
-        message: "Customer deleted successfully",
-      });
+      res.status(200).json({ success: true, message: "Customer deleted successfully." });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error deleting customer",
-        error: error.message,
-      });
+      next(new AppError("Error deleting customer: " + error.message, 500));
     }
   },
 
-  /**
-   * Get customer's orders (list of referenced order documents)
-   * @route GET /api/customers/:id/orders
-   */
-  getCustomerOrders: async (req, res) => {
+  getCustomerOrders: async (req, res, next) => {
     try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+        return next(new AppError("Invalid customer ID format.", 400));
+      }
       const customer = await Customer.findById(req.params.id).populate({
         path: 'cOrders',
-        options: { sort: { createdAt: -1 } } // Example: sort orders by creation date
+        populate: { path: 'order_items.item', select: 'product_name retail_price' }, // Populate item details in orders
+        options: { sort: { createdAt: -1 } }
       });
-
-      if (!customer) {
-        return res.status(404).json({
-          success: false,
-          message: "Customer not found",
-        });
-      }
-
-      res.status(200).json({
-        success: true,
-        count: customer.cOrders.length,
-        data: customer.cOrders,
-      });
+      if (!customer) return next(new AppError("Customer not found.", 404));
+      res.status(200).json({ success: true, count: customer.cOrders.length, data: customer.cOrders });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error fetching customer orders",
-        error: error.message,
-      });
+      next(new AppError("Error fetching customer orders: " + error.message, 500));
     }
   },
 
-  /**
-   * Add order FOR a customer (creates a new Order document and links it)
-   * @route POST /api/customers/:id/orders
-   */
-  addOrderToCustomer: async (req, res) => {
+  addOrderToCustomer: async (req, res, next) => {
+    // This route creates a NEW order and links it to the customer.
+    // It's essentially an alias for POST /api/v1/orders with customer pre-filled.
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+        await session.abortTransaction(); session.endSession();
+        return next(new AppError("Invalid customer ID format.", 400));
+      }
       const customer = await Customer.findById(req.params.id).session(session);
-
       if (!customer) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(404).json({
-          success: false,
-          message: "Customer not found",
-        });
+        await session.abortTransaction(); session.endSession();
+        return next(new AppError("Customer not found.", 404));
       }
 
-      const orderData = req.body;
-      orderData.customer = customer._id; // Link order to this customer
-
+      const orderData = { ...req.body, customer: customer._id };
       const newOrder = new Order(orderData);
       await newOrder.save({ session });
 
       customer.cOrders.push(newOrder._id);
-      // The Order model's pre-save hook and addPayment method will handle financial updates.
-      // For new orders, outstanding amount will be total_price, paid will be 0.
-      // The customer's balance recalculation should occur upon order save/payment.
-      // We can explicitly call recalculateBalances here if needed, or ensure Order model handles it.
-      // For simplicity, let's assume the Order.save() triggers recalculation of order.outstanding_amount
-      // and customer.recalculateBalances() (if such a method is robustly implemented)
-      // or rely on the Order.addPayment() to update customer balances.
-
-      // For now, let's call a method to sync customer balance after adding order.
-      customer.cOutstandingAmt += newOrder.total_price; // Direct update, ensure this matches Order model logic.
-
+      // Customer balance (cOutstandingAmt) should be updated based on the new order's outstanding amount.
+      // The Order model's pre-save hook calculates order_outstanding_amount.
+      customer.cOutstandingAmt += newOrder.order_outstanding_amount;
       await customer.save({ session });
 
       await session.commitTransaction();
-      session.endSession();
-
-      res.status(201).json({ // Changed to 201 for resource creation
-        success: true,
-        message: "Order created and added to customer successfully",
-        data: newOrder,
-      });
+      res.status(201).json({ success: true, message: "Order created and added to customer successfully.", data: newOrder });
     } catch (error) {
       await session.abortTransaction();
+      if (error.name === 'ValidationError') return next(new AppError(error.message, 400));
+      if (error.code === 11000) return next(new AppError(`Duplicate invoice ID.`, 400));
+      next(new AppError("Error adding order to customer: " + error.message, 500));
+    } finally {
       session.endSession();
-      res.status(500).json({
-        success: false,
-        message: "Error adding order to customer",
-        error: error.message,
-      });
     }
   },
 
-
-  /**
-   * Update a specific order linked to a customer.
-   * This route should ideally redirect or be handled by orderController.
-   * For now, it updates the referenced Order document.
-   * @route PUT /api/customers/:id/orders/:orderId
-   */
-  updateCustomerOrder: async (req, res) => {
+  updateCustomerOrder: async (req, res, next) => {
+    // This route is problematic as it implies updating a top-level Order through the Customer.
+    // Ideally, orders should be updated via PUT /api/v1/orders/:orderId.
+    // If this route is kept, it should ensure the order being updated actually belongs to the customer.
+    // For now, focusing on error handling.
+    // Critical: This function needs to ensure customer balances are correctly updated if order.total_price changes.
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
-      const customer = await Customer.findById(req.params.id).session(session);
+      const { id: customerId, orderId } = req.params;
+      if (!mongoose.Types.ObjectId.isValid(customerId) || !mongoose.Types.ObjectId.isValid(orderId)) {
+        await session.abortTransaction(); session.endSession();
+        return next(new AppError("Invalid customer or order ID format.", 400));
+      }
+
+      const customer = await Customer.findById(customerId).session(session);
       if (!customer) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(404).json({ success: false, message: "Customer not found" });
+        await session.abortTransaction(); session.endSession();
+        return next(new AppError("Customer not found.", 404));
       }
 
-      const orderExistsInCustomer = customer.cOrders.some(id => id.toString() === req.params.orderId);
-      if (!orderExistsInCustomer) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(404).json({ success: false, message: "Order not associated with this customer" });
-      }
-
-      const order = await Order.findById(req.params.orderId).session(session);
+      const order = await Order.findOne({ _id: orderId, customer: customerId }).session(session);
       if (!order) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(404).json({ success: false, message: "Order not found" });
+        await session.abortTransaction(); session.endSession();
+        return next(new AppError("Order not found for this customer.", 404));
       }
 
-      const oldOrderTotal = order.total_price || 0;
+      const oldOrderOutstanding = order.order_outstanding_amount;
 
-      // Update order fields from req.body
-      Object.assign(order, req.body);
-      // The Order model's pre-save hooks should recalculate totals if order_items are changed.
-      await order.save({ session });
+      Object.assign(order, req.body); // Apply updates
+      await order.save({ session }); // Triggers Order model's pre-save hooks
 
-      // Adjust customer's outstanding balance if order total changed
-      const newOrderTotal = order.total_price || 0;
-      if (newOrderTotal !== oldOrderTotal) {
-        customer.cOutstandingAmt = (customer.cOutstandingAmt - oldOrderTotal) + newOrderTotal;
-        await customer.save({ session });
-      }
+      const newOrderOutstanding = order.order_outstanding_amount;
+      const changeInOutstanding = newOrderOutstanding - oldOrderOutstanding;
+      customer.cOutstandingAmt += changeInOutstanding;
+      if (customer.cOutstandingAmt < 0) customer.cOutstandingAmt = 0;
+
+      await customer.save({ session });
 
       await session.commitTransaction();
-      session.endSession();
-
-      res.status(200).json({
-        success: true,
-        message: "Order updated successfully",
-        data: order,
-      });
+      res.status(200).json({ success: true, message: "Order updated successfully.", data: order });
     } catch (error) {
       await session.abortTransaction();
+      if (error.name === 'ValidationError') return next(new AppError(error.message, 400));
+      next(new AppError("Error updating customer order: " + error.message, 500));
+    } finally {
       session.endSession();
-      res.status(500).json({
-        success: false,
-        message: "Error updating customer order",
-        error: error.message,
-      });
     }
   },
 
-
-  /**
-   * Remove an order reference from a customer. Does not delete the Order document itself.
-   * To delete an Order document, use the orderController.
-   * @route DELETE /api/customers/:id/orders/:orderId
-   */
-  deleteCustomerOrder: async (req, res) => {
+  deleteCustomerOrder: async (req, res, next) => {
+    // This should ideally only remove the *reference* from the customer.
+    // Deleting the Order document itself should be done via DELETE /api/v1/orders/:orderId.
+    // If this route *is* meant to delete the actual Order, ensure implications are handled.
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
-      const customer = await Customer.findById(req.params.id).session(session);
+      const { id: customerId, orderId } = req.params;
+      if (!mongoose.Types.ObjectId.isValid(customerId) || !mongoose.Types.ObjectId.isValid(orderId)) {
+        await session.abortTransaction(); session.endSession();
+        return next(new AppError("Invalid customer or order ID format.", 400));
+      }
 
+      const customer = await Customer.findById(customerId).session(session);
       if (!customer) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(404).json({
-          success: false,
-          message: "Customer not found",
-        });
+        await session.abortTransaction(); session.endSession();
+        return next(new AppError("Customer not found.", 404));
       }
 
-      const orderIdToRemove = req.params.orderId;
-      const initialOrderCount = customer.cOrders.length;
-
-      // Fetch the order to adjust customer's balance
-      const orderToRemove = await Order.findById(orderIdToRemove).session(session);
-      if (orderToRemove && customer.cOrders.some(id => id.toString() === orderIdToRemove)) {
-        customer.cOutstandingAmt -= (orderToRemove.order_outstanding_amount || 0);
-        // It's generally better to let Customer.recalculateBalances() handle this if it exists and is reliable.
-        // Or ensure that deleting an order also triggers an update on the customer's total.
+      const orderToRemove = await Order.findOne({ _id: orderId, customer: customerId }).session(session);
+      if (!orderToRemove) {
+        // If just removing reference, check if it exists in cOrders array.
+        const orderIndex = customer.cOrders.findIndex(oId => oId.toString() === orderId);
+        if (orderIndex === -1) {
+          await session.abortTransaction(); session.endSession();
+          return next(new AppError("Order reference not found for this customer.", 404));
+        }
+        customer.cOrders.splice(orderIndex, 1);
+        // Note: Customer balance (cOutstandingAmt) is NOT adjusted here if only reference is removed
+        // because the order still exists with its outstanding amount.
+      } else {
+        // If we are deleting the order itself:
+        customer.cOutstandingAmt -= orderToRemove.order_outstanding_amount;
+        if (customer.cOutstandingAmt < 0) customer.cOutstandingAmt = 0;
+        customer.cOrders = customer.cOrders.filter(oId => oId.toString() !== orderId);
+        await Order.findByIdAndDelete(orderId, { session });
       }
-
-
-      customer.cOrders = customer.cOrders.filter(
-        (orderId) => orderId.toString() !== orderIdToRemove
-      );
-
-      if (customer.cOrders.length === initialOrderCount) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(404).json({
-          success: false,
-          message: "Order reference not found for this customer",
-        });
-      }
-      if (customer.cOutstandingAmt < 0) customer.cOutstandingAmt = 0; // Ensure not negative
 
       await customer.save({ session });
       await session.commitTransaction();
-      session.endSession();
 
-      res.status(200).json({
-        success: true,
-        message: "Order reference removed from customer successfully",
-      });
+      res.status(200).json({ success: true, message: "Order processed for customer successfully." });
     } catch (error) {
       await session.abortTransaction();
+      next(new AppError("Error processing order for customer: " + error.message, 500));
+    } finally {
       session.endSession();
-      res.status(500).json({
-        success: false,
-        message: "Error removing order reference from customer",
-        error: error.message,
-      });
     }
   },
 
-  /**
-   * Update customer payment (general payment, not tied to specific order directly via this route)
-   * It's generally better to make payments against specific orders.
-   * This method updates cPaidAmount and cOutstandingAmt.
-   * @route PUT /api/customers/:id/payment
-   */
-  updateCustomerPayment: async (req, res) => {
+  updateCustomerPayment: async (req, res, next) => {
+    // This route handles a general payment to a customer's account, NOT tied to a specific order.
+    // For payments against specific orders, use POST /api/v1/orders/:orderId/pay
+    // This function might be used for account credits or pre-payments not yet allocated.
+    // Its impact on cOutstandingAmt should be carefully considered. If cOutstandingAmt
+    // is strictly a sum of order_outstanding_amounts, this direct adjustment can cause drift.
+    // It's often better to apply payments to oldest outstanding orders first.
+    // For now, it directly adjusts balances as per previous logic.
     try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+        return next(new AppError("Invalid customer ID format.", 400));
+      }
       const { paymentAmount } = req.body;
-
       if (paymentAmount === undefined || isNaN(paymentAmount) || Number(paymentAmount) <= 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Valid positive payment amount is required",
-        });
+        return next(new AppError("Valid positive payment amount is required.", 400));
       }
 
       const customer = await Customer.findById(req.params.id);
-
-      if (!customer) {
-        return res.status(404).json({
-          success: false,
-          message: "Customer not found",
-        });
-      }
+      if (!customer) return next(new AppError("Customer not found.", 404));
 
       customer.cPaidAmount += Number(paymentAmount);
       customer.cOutstandingAmt -= Number(paymentAmount);
-      if (customer.cOutstandingAmt < 0) {
-        customer.cOutstandingAmt = 0; // Cannot be negative
-      }
-
-
+      if (customer.cOutstandingAmt < 0) customer.cOutstandingAmt = 0;
       await customer.save();
 
       res.status(200).json({
         success: true,
-        message: "Customer payment updated successfully",
-        data: {
-          cPaidAmount: customer.cPaidAmount,
-          cOutstandingAmt: customer.cOutstandingAmt,
-        },
+        message: "Customer payment updated successfully.",
+        data: { cPaidAmount: customer.cPaidAmount, cOutstandingAmt: customer.cOutstandingAmt },
       });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error updating customer payment",
-        error: error.message,
-      });
+      next(new AppError("Error updating customer payment: " + error.message, 500));
     }
   },
 
-  /**
-   * Search customers by name, NIC, or phone
-   * @route GET /api/customers/search
-   */
-  searchCustomers: async (req, res) => {
+  searchCustomers: async (req, res, next) => {
     try {
       const { query } = req.query;
-
-      if (!query) {
-        return res.status(400).json({
-          success: false,
-          message: "Search query is required",
-        });
-      }
-
+      if (!query) return next(new AppError("Search query is required.", 400));
       const customers = await Customer.find({
         $or: [
           { cName: { $regex: query, $options: "i" } },
           { cNIC: { $regex: query, $options: "i" } },
           { cPhone: { $regex: query, $options: "i" } },
         ],
-      }).select("-cOrders");
-
-      res.status(200).json({
-        success: true,
-        count: customers.length,
-        data: customers,
-      });
+      }).select("-cOrders").sort({ cName: 1 });
+      res.status(200).json({ success: true, count: customers.length, data: customers });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error searching customers",
-        error: error.message,
-      });
+      next(new AppError("Error searching customers: " + error.message, 500));
     }
   },
 
-  /**
-   * Get customers with outstanding balance
-   * @route GET /api/customers/outstanding
-   */
-  getCustomersWithOutstandingBalance: async (req, res) => {
+  getCustomersWithOutstandingBalance: async (req, res, next) => {
     try {
-      const customers = await Customer.find({
-        cOutstandingAmt: { $gt: 0 },
-      })
-        .select("-cOrders")
+      const customers = await Customer.find({ cOutstandingAmt: { $gt: 0 } })
+        .select("-cOrders") // Exclude cOrders details from this list
         .sort({ cOutstandingAmt: -1 });
-
-      res.status(200).json({
-        success: true,
-        count: customers.length,
-        data: customers,
-      });
+      res.status(200).json({ success: true, count: customers.length, data: customers });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error fetching customers with outstanding balance",
-        error: error.message,
-      });
+      next(new AppError("Error fetching customers with outstanding balance: " + error.message, 500));
     }
   },
 };
