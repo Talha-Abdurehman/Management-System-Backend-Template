@@ -75,7 +75,7 @@ const OrdersSchema = new mongoose.Schema(
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customers",
-      // required: true, // Customer is now optional
+      required: false, // Explicitly make it optional
     },
   },
   { timestamps: true }
@@ -89,25 +89,44 @@ OrderItemSchema.pre("save", function (next) {
 });
 
 OrdersSchema.pre("save", function (next) {
-  if (this.isNew || this.isModified("order_items")) {
-    this.subtotal = this.order_items.reduce((total, item) => {
-      return total + (item.applied_price * item.quantity);
+  // Calculate financial fields if order_items changed, or if it's a new order,
+  // or if the overall total_discount field itself was modified directly.
+  if (this.isNew || this.isModified("order_items") || this.isModified("total_discount")) {
+    // 1. Calculate Subtotal: Sum of (applied_price * quantity) for each item.
+    // This is the price before any discounts.
+    this.subtotal = this.order_items.reduce((sum, item) => {
+      return sum + (item.applied_price * item.quantity);
     }, 0);
 
-    this.total_discount = this.order_items.reduce((total, item) => {
-      return total + (item.discount_amount * item.quantity); // Assuming discount_amount is per item
-    }, 0);
+    // 2. Calculate Sum of Item-Level Discounts
+    // Each OrderItem already calculates its own item_total = (applied_price - discount_amount) * quantity.
+    // So, the sum of (item.discount_amount * quantity) can be derived if needed,
+    // but it's better to sum item_total from each item if item-level discounts are applied first.
 
-    this.total_price = Math.max(0, this.order_items.reduce((total, item) => {
-      const itemTotal = item.item_total !== undefined ? item.item_total : Math.max(0, (item.applied_price - item.discount_amount) * item.quantity);
-      return total + itemTotal;
-    }, 0));
+    // Let's recalculate total_price based on item_total of each OrderItem
+    // The OrderItemSchema.pre("save") hook ensures item_total is correct: (applied_price - discount_amount) * quantity
+    let priceAfterItemDiscounts = 0;
+    this.order_items.forEach(item => {
+      // Ensure item_total is calculated if not present (e.g. if not saved yet as subdocument)
+      const currentItemTotal = item.item_total !== undefined
+        ? item.item_total
+        : Math.max(0, (item.applied_price - (item.discount_amount || 0)) * item.quantity);
+      priceAfterItemDiscounts += currentItemTotal;
+    });
+
+    // 3. Apply Overall Order Discount
+    // The `this.total_discount` field is assumed to be the "Overall Discount" from the payload.
+    const overallOrderDiscountValue = this.total_discount || 0;
+
+    // Final Total Price = Price After Item Discounts - Overall Order Discount
+    this.total_price = Math.max(0, priceAfterItemDiscounts - overallOrderDiscountValue);
   }
 
+  // Calculate payment-related fields if relevant fields changed
   if (
     this.isNew ||
     this.isModified("payments_received") ||
-    this.isModified("total_price")
+    this.isModified("total_price") // total_price can change due to item changes or discount changes
   ) {
     this.order_paid_amount = this.payments_received.reduce(
       (sum, payment) => sum + payment.amount,
@@ -115,17 +134,18 @@ OrdersSchema.pre("save", function (next) {
     );
     this.order_outstanding_amount = Math.max(0, this.total_price - this.order_paid_amount);
 
+    // Update order_status based on payment status
     if (this.order_status === ORDER_STATUS.CANCELLED) {
-      // Leave status as cancelled
-    } else if (this.total_price <= 0) { // Covers cases like fully discounted or zero value order
-      this.order_status = ORDER_STATUS.FULLY_PAID; // Or some other status like 'Fulfilled'
-    } else if (this.order_paid_amount <= 0) {
-      this.order_status = ORDER_STATUS.PENDING;
-    } else if (this.order_outstanding_amount <= 0) {
+      // Do not change if already cancelled
+    } else if (this.total_price <= 0 && this.order_items.length > 0) { // Order has items but value is <=0 (e.g. fully discounted)
       this.order_status = ORDER_STATUS.FULLY_PAID;
-    } else if (this.order_paid_amount > 0 && this.order_outstanding_amount > 0) {
+    } else if (this.total_price <= 0 && this.order_items.length == 0) { // No items, no price
+      this.order_status = ORDER_STATUS.PENDING; // Or another status like 'EMPTY' if that makes sense
+    } else if (this.order_paid_amount >= this.total_price) {
+      this.order_status = ORDER_STATUS.FULLY_PAID;
+    } else if (this.order_paid_amount > 0 && this.order_paid_amount < this.total_price) {
       this.order_status = ORDER_STATUS.PARTIALLY_PAID;
-    } else { // Default fallback, should ideally not be hit if logic above is comprehensive
+    } else { // this.order_paid_amount <= 0 and this.total_price > 0
       this.order_status = ORDER_STATUS.PENDING;
     }
   }
