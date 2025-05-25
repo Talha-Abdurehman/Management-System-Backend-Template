@@ -13,6 +13,9 @@ router.put("/orders/:id", orderController.updateOrderById);
 
 router.delete("/orders/:id", orderController.deleteOrderById);
 
+// New route for adding payment to a specific order
+router.post("/orders/:orderId/payment", orderController.addPaymentToOrder);
+
 //router.delete("/orders", orderController.deleteOrder);
 
 module.exports = router;
