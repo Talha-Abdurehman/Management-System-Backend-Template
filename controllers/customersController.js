@@ -99,11 +99,15 @@ const CustomerController = {
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
-      if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      const customerId = req.params.id;
+      const { deleteOrders = 'false' } = req.query;
+
+      if (!mongoose.Types.ObjectId.isValid(customerId)) {
         await session.abortTransaction(); session.endSession();
         return next(new AppError("Invalid customer ID format.", 400));
       }
-      const customer = await Customer.findById(req.params.id).session(session);
+
+      const customer = await Customer.findById(customerId).session(session);
       if (!customer) {
         await session.abortTransaction(); session.endSession();
         return next(new AppError("Customer not found.", 404));
@@ -111,14 +115,23 @@ const CustomerController = {
 
       if (customer.cOutstandingAmt > 0) {
         await session.abortTransaction(); session.endSession();
-        return next(new AppError("Cannot delete customer with an outstanding balance.", 400));
+        return next(new AppError("Cannot delete customer with an outstanding balance. Please clear the balance first.", 400));
       }
 
-      await Order.deleteMany({ customer: customer._id }, { session });
-      await Customer.findByIdAndDelete(req.params.id, { session });
+      let message;
+
+      if (deleteOrders === 'true') {
+        await Order.deleteMany({ customer: customer._id }, { session });
+        await Customer.findByIdAndDelete(customerId, { session });
+        message = "Customer and all associated orders deleted successfully.";
+      } else {
+        await Order.updateMany({ customer: customer._id }, { $set: { customer: null } }, { session });
+        await Customer.findByIdAndDelete(customerId, { session });
+        message = "Customer profile deleted successfully. Order history has been retained but disassociated.";
+      }
 
       await session.commitTransaction();
-      res.status(200).json({ success: true, message: "Customer and associated orders deleted successfully." });
+      res.status(200).json({ success: true, message: message });
     } catch (error) {
       await session.abortTransaction();
       next(new AppError("Error deleting customer: " + error.message, 500));
