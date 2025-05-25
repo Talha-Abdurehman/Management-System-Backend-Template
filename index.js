@@ -1,6 +1,8 @@
-const express = require("express");
-const ConnectDB = require("./db/mongodb.connection");
 const dotenv = require("dotenv");
+dotenv.config(); // Ensure this is the first thing to run to load .env variables
+
+const express = require("express");
+const ConnectDB = require("./db/mongodb.connection"); // Now MONGO_URI should be available
 const authMiddleware = require("./middleware/authMiddleware");
 
 const app = express();
@@ -39,6 +41,10 @@ app.use("/api/v1", authMiddleware, require("./routes/customersRoutes"));
 app.get("/", (req, res) => {
   res.send("<h1>Current Status: Running</h1>");
 });
+
+// Global error handling middleware (must be defined after all other app.use() and routes)
+const globalErrorHandler = require('./middleware/errorHandler');
+app.use(globalErrorHandler);
 
 app.listen(PORT, () => {
   console.log(`Listening on PORT ${PORT}`);

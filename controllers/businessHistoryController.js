@@ -1,154 +1,168 @@
 const BusinessHistory = require("../models/BusinessHistory.model");
+const AppError = require('../utils/AppError');
 
 // Helper function to update or add months and days to a history record
+// NOTE: This helper is NOT ATOMIC for concurrent requests trying to create the same new month/day.
+// It's prone to race conditions if multiple requests attempt to initialize the same nested document.
+// For read-heavy or single-update scenarios, it's acceptable. For high concurrency on new entries,
+// a more robust solution (e.g., queuing, distributed locks, or complex atomic ops) is needed.
 function _updateNestedHistoryData(existingRecord, newData) {
-  newData.months.forEach((newMonth) => {
+  newData.months.forEach((newMonthData) => {
     const monthIndex = existingRecord.months.findIndex(
-      (m) => m.month === newMonth.month
+      (m) => m.month === newMonthData.month
     );
 
     if (monthIndex >= 0) {
-      // Month exists, update/add days
       const targetMonth = existingRecord.months[monthIndex];
-      newMonth.days.forEach((newDay) => {
+      newMonthData.days.forEach((newDayData) => {
         const dayIndex = targetMonth.days.findIndex(
-          (d) => d.day === newDay.day
+          (d) => d.day === newDayData.day
         );
-
         if (dayIndex >= 0) {
-          // Update existing day
-          targetMonth.days[dayIndex] = newDay;
+          targetMonth.days[dayIndex].totalProfit = newDayData.totalProfit;
+          targetMonth.days[dayIndex].totalOrders = newDayData.totalOrders;
         } else {
-          // Add new day
-          targetMonth.days.push(newDay);
+          targetMonth.days.push({ day: newDayData.day, totalProfit: newDayData.totalProfit, totalOrders: newDayData.totalOrders });
         }
       });
-      // Optional: Sort days if order matters
       targetMonth.days.sort((a, b) => a.day - b.day);
     } else {
-      // Add new month with its days
-      existingRecord.months.push(newMonth);
+      const newMonthEntry = { month: newMonthData.month, days: [] };
+      newMonthData.days.forEach(newDayData => {
+        newMonthEntry.days.push({ day: newDayData.day, totalProfit: newDayData.totalProfit, totalOrders: newDayData.totalOrders });
+      });
+      newMonthEntry.days.sort((a, b) => a.day - b.day);
+      existingRecord.months.push(newMonthEntry);
     }
   });
-  // Optional: Sort months if order matters
   existingRecord.months.sort((a, b) => a.month - b.month);
 }
 
-exports.fetchHistory = async (req, res) => {
+exports.fetchHistory = async (req, res, next) => {
   try {
-    const data = await BusinessHistory.find();
+    const data = await BusinessHistory.find().sort({ year: -1 });
     if (!data || data.length === 0) {
-      return res.status(404).json({ Message: "Not Found" });
+      // Return empty array for consistency, not a 404 for a list.
+      return res.json([]);
     }
     res.json(data);
   } catch (e) {
-    console.error("Error fetching history:", e);
-    res.status(500).json({ message: e.message || "Internal Server Error" });
+    next(new AppError(e.message || "Error fetching history", 500));
   }
 };
 
-exports.createHistoryRecord = async (req, res) => {
+exports.createHistoryRecord = async (req, res, next) => {
   try {
-    if (process.env.NODE_ENV !== "production") {
-      console.log("Request body for createHistoryRecord:", req.body);
+    // Input validation (basic)
+    if (!req.body || (Array.isArray(req.body) && req.body.length === 0) || (!Array.isArray(req.body) && !req.body.year)) {
+      return next(new AppError("Invalid request body. Year is required.", 400));
     }
 
     if (Array.isArray(req.body)) {
-      const results = await Promise.all(
-        req.body.map(async (historyItem) => {
-          const existingRecord = await BusinessHistory.findOne({
-            year: historyItem.year,
-          });
-
-          if (existingRecord) {
-            _updateNestedHistoryData(existingRecord, historyItem);
-            await existingRecord.save();
-            return { year: historyItem.year, status: "updated" };
-          } else {
-            const newRecord = new BusinessHistory(historyItem);
-            await newRecord.save();
-            return { year: historyItem.year, status: "created" };
-          }
-        })
-      );
-
-      return res
-        .status(201)
-        .json({ message: "Records processed successfully", results });
+      const results = [];
+      for (const historyItem of req.body) {
+        if (!historyItem.year) {
+          results.push({ year: null, status: "skipped", error: "Year is required for item." });
+          continue;
+        }
+        const existingRecord = await BusinessHistory.findOne({ year: historyItem.year });
+        if (existingRecord) {
+          _updateNestedHistoryData(existingRecord, historyItem);
+          await existingRecord.save();
+          results.push({ year: historyItem.year, status: "updated" });
+        } else {
+          const newRecord = new BusinessHistory(historyItem);
+          // Ensure months and days are sorted if provided in unsorted manner
+          newRecord.months.forEach(month => month.days.sort((a, b) => a.day - b.day));
+          newRecord.months.sort((a, b) => a.month - b.month);
+          await newRecord.save();
+          results.push({ year: historyItem.year, status: "created" });
+        }
+      }
+      return res.status(201).json({ message: "Records processed successfully", results });
     } else {
       const historyItem = req.body;
-      const existingRecord = await BusinessHistory.findOne({
-        year: historyItem.year,
-      });
+      if (!historyItem.year) return next(new AppError("Year is required.", 400));
 
+      const existingRecord = await BusinessHistory.findOne({ year: historyItem.year });
       if (existingRecord) {
         _updateNestedHistoryData(existingRecord, historyItem);
         await existingRecord.save();
-        return res
-          .status(200)
-          .json({ message: "Record updated successfully" });
+        return res.status(200).json({ message: "Record updated successfully", data: existingRecord });
       } else {
         const newRecord = new BusinessHistory(historyItem);
+        newRecord.months.forEach(month => month.days.sort((a, b) => a.day - b.day));
+        newRecord.months.sort((a, b) => a.month - b.month);
         await newRecord.save();
-        return res
-          .status(201)
-          .json({ message: "Record created successfully" });
+        return res.status(201).json({ message: "Record created successfully", data: newRecord });
       }
     }
   } catch (e) {
-    console.error("Error creating/updating history record:", e);
-    res.status(500).json({ message: e.message || "Internal Server Error" });
+    if (e.name === 'ValidationError') {
+      return next(new AppError(e.message, 400));
+    }
+    if (e.code === 11000) { // Duplicate year
+      return next(new AppError(`History record for year ${req.body.year || e.keyValue.year} already exists.`, 400));
+    }
+    next(new AppError(e.message || "Error creating/updating history record", 500));
   }
 };
 
-exports.getHistoryByYear = async (req, res) => {
+exports.getHistoryByYear = async (req, res, next) => {
   try {
-    const { id } = req.params; // id is the year
-    const record = await BusinessHistory.findOne({ year: parseInt(id, 10) });
-
-    if (!record) {
-      return res.status(404).json({ message: "Year not found" });
+    const year = parseInt(req.params.id, 10);
+    if (isNaN(year)) {
+      return next(new AppError("Invalid year format.", 400));
     }
-
+    const record = await BusinessHistory.findOne({ year: year });
+    if (!record) {
+      return next(new AppError("Year not found", 404));
+    }
     res.json(record);
   } catch (e) {
-    console.error(`Error fetching history for year ${req.params.id}:`, e);
-    res.status(500).json({ message: e.message || "Internal Server Error" });
+    next(new AppError(e.message || "Error fetching history by year", 500));
   }
 };
 
-exports.updateHistoryByYear = async (req, res) => {
+exports.updateHistoryByYear = async (req, res, next) => {
   try {
-    const { id } = req.params; // id is the year
+    const year = parseInt(req.params.id, 10);
+    if (isNaN(year)) {
+      return next(new AppError("Invalid year format.", 400));
+    }
     const updateData = req.body;
+    if (!updateData || !updateData.months) { // Basic validation
+      return next(new AppError("Invalid update data. 'months' array is required.", 400));
+    }
 
-    const record = await BusinessHistory.findOne({ year: parseInt(id, 10) });
-
+    const record = await BusinessHistory.findOne({ year: year });
     if (!record) {
-      return res.status(404).json({ message: "Year not found" });
+      return next(new AppError("Year not found, cannot update.", 404));
     }
 
     _updateNestedHistoryData(record, updateData);
     await record.save();
-    res.json({ message: "Updated successfully" });
+    res.json({ message: "Updated successfully", data: record });
   } catch (e) {
-    console.error(`Error updating history for year ${req.params.id}:`, e);
-    res.status(500).json({ message: e.message || "Internal Server Error" });
+    if (e.name === 'ValidationError') {
+      return next(new AppError(e.message, 400));
+    }
+    next(new AppError(e.message || "Error updating history by year", 500));
   }
 };
 
-exports.deleteHistoryByYear = async (req, res) => {
+exports.deleteHistoryByYear = async (req, res, next) => {
   try {
-    const { id } = req.params; // id is the year
-    const result = await BusinessHistory.deleteOne({ year: parseInt(id, 10) });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ message: "Year not found" });
+    const year = parseInt(req.params.id, 10);
+    if (isNaN(year)) {
+      return next(new AppError("Invalid year format.", 400));
     }
-
+    const result = await BusinessHistory.deleteOne({ year: year });
+    if (result.deletedCount === 0) {
+      return next(new AppError("Year not found, nothing to delete.", 404));
+    }
     res.json({ message: "Deleted successfully" });
   } catch (e) {
-    console.error(`Error deleting history for year ${req.params.id}:`, e);
-    res.status(500).json({ message: e.message || "Internal Server Error" });
+    next(new AppError(e.message || "Error deleting history by year", 500));
   }
 };

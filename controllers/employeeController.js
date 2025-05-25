@@ -1,20 +1,18 @@
 const Employee = require("../models/Employee.model.js");
 const mongoose = require("mongoose");
+const AppError = require('../utils/AppError');
+const attendanceService = require('../services/attendanceService');
 
-exports.createEmployee = async (req, res) => {
+exports.createEmployee = async (req, res, next) => {
   try {
     const { name, cnic, phone, salary, imgUrl } = req.body;
     if (!name || !cnic || !salary) {
-      return res
-        .status(400)
-        .json({ message: "Name, CNIC, and Salary are required." });
+      return next(new AppError("Name, CNIC, and Salary are required.", 400));
     }
 
     const existingEmployee = await Employee.findOne({ cnic });
     if (existingEmployee) {
-      return res
-        .status(400)
-        .json({ message: `Employee with CNIC ${cnic} already exists.` });
+      return next(new AppError(`Employee with CNIC ${cnic} already exists.`, 400));
     }
 
     const newEmployee = new Employee({ name, cnic, phone, salary, imgUrl: imgUrl || null });
@@ -24,42 +22,43 @@ exports.createEmployee = async (req, res) => {
       employee: newEmployee,
     });
   } catch (error) {
-    res.status(500).json({ message: "Failed to create employee" });
+    if (error.code === 11000 && error.keyPattern && error.keyPattern.cnic) {
+      return next(new AppError(`Employee with CNIC '${req.body.cnic}' already exists.`, 400));
+    }
+    next(new AppError(error.message || "Failed to create employee", 500));
   }
 };
 
-exports.getAllEmployees = async (req, res) => {
+exports.getAllEmployees = async (req, res, next) => {
   try {
     const employees = await Employee.find().sort({ createdAt: -1 });
     res.json(employees);
   } catch (error) {
-    console.error("Error fetching all employees:", error);
-    res.status(500).json({ message: "Failed to fetch employees" });
+    next(new AppError(error.message || "Failed to fetch employees", 500));
   }
 };
 
-exports.getEmployeeById = async (req, res) => {
+exports.getEmployeeById = async (req, res, next) => {
   try {
     const { id } = req.params;
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid employee ID format" });
+      return next(new AppError("Invalid employee ID format", 400));
     }
     const employee = await Employee.findById(id);
     if (!employee) {
-      return res.status(404).json({ message: "Employee not found" });
+      return next(new AppError("Employee not found", 404));
     }
     res.json(employee);
   } catch (error) {
-    console.error(`Error fetching employee by ID ${req.params.id}:`, error);
-    res.status(500).json({ message: "Failed to fetch employee" });
+    next(new AppError(error.message || "Failed to fetch employee", 500));
   }
 };
 
-exports.updateEmployee = async (req, res) => {
+exports.updateEmployee = async (req, res, next) => {
   try {
     const { id } = req.params;
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid employee ID format" });
+      return next(new AppError("Invalid employee ID format", 400));
     }
     const { name, cnic, phone, salary, imgUrl } = req.body;
 
@@ -69,194 +68,94 @@ exports.updateEmployee = async (req, res) => {
         _id: { $ne: id },
       });
       if (existingEmployee) {
-        return res
-          .status(400)
-          .json({ message: `Employee with CNIC ${cnic} already exists.` });
+        return next(new AppError(`Employee with CNIC ${cnic} already exists.`, 400));
       }
     }
 
-    const updateFields = { name, cnic, phone, salary };
-    if (imgUrl !== undefined) { // Allow setting imgUrl to null or a new value
+    const updateFields = {};
+    if (name) updateFields.name = name;
+    if (cnic) updateFields.cnic = cnic;
+    if (phone) updateFields.phone = phone;
+    if (salary) updateFields.salary = salary;
+    if (imgUrl !== undefined) {
       updateFields.imgUrl = imgUrl;
     }
 
-
     const updatedEmployee = await Employee.findByIdAndUpdate(
       id,
-      { $set: updateFields }, // Use $set to only update provided fields
+      { $set: updateFields },
       { new: true, runValidators: true }
     );
 
     if (!updatedEmployee) {
-      return res.status(404).json({ message: "Employee not found" });
+      return next(new AppError("Employee not found", 404));
     }
     res.json({
       message: "Employee updated successfully",
       employee: updatedEmployee,
     });
   } catch (error) {
-    res.status(500).json({ message: "Failed to update employee" });
+    if (error.code === 11000 && error.keyPattern && error.keyPattern.cnic) {
+      return next(new AppError(`Employee with CNIC '${req.body.cnic}' already exists.`, 400));
+    }
+    next(new AppError(error.message || "Failed to update employee", 500));
   }
 };
 
-exports.deleteEmployee = async (req, res) => {
+exports.deleteEmployee = async (req, res, next) => {
   try {
     const { id } = req.params;
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid employee ID format" });
+      return next(new AppError("Invalid employee ID format", 400));
     }
     const result = await Employee.findByIdAndDelete(id);
     if (!result) {
-      return res.status(404).json({ message: "Employee not found" });
+      return next(new AppError("Employee not found", 404));
     }
     res.json({ message: "Employee deleted successfully" });
   } catch (error) {
-    console.error(`Error deleting employee ${req.params.id}:`, error);
-    res.status(500).json({ message: "Failed to delete employee" });
+    next(new AppError(error.message || "Failed to delete employee", 500));
   }
 };
 
-exports.addAttendance = async (req, res) => {
+// --- Employee Attendance Controllers using Attendance Service ---
+
+exports.addAttendance = async (req, res, next) => {
   try {
     const { employeeId } = req.params;
-    const { date, status, payment } = req.body;
-
-    if (!date || !status || !payment) {
-      return res
-        .status(400)
-        .json({ message: "Date, status, and payment are required." });
-    }
-    if (!mongoose.Types.ObjectId.isValid(employeeId)) {
-      return res.status(400).json({ message: "Invalid employee ID format" });
-    }
-
-    const employee = await Employee.findById(employeeId);
-    if (!employee) {
-      return res.status(404).json({ message: "Employee not found" });
-    }
-
-    const attendanceDate = new Date(date);
-    attendanceDate.setUTCHours(0, 0, 0, 0);
-
-    const existingAttendance = employee.attendance.find(
-      (att) => att.date.getTime() === attendanceDate.getTime()
-    );
-
-    if (existingAttendance) {
-      return res.status(400).json({
-        message: `Attendance for ${attendanceDate.toISOString().split("T")[0]
-          } already exists. Use PUT to update.`,
-      });
-    }
-
-    employee.attendance.push({ date: attendanceDate, status, payment });
-    await employee.save();
-    res
-      .status(201)
-      .json({ message: "Attendance added successfully", employee });
+    const employee = await attendanceService.addAttendanceRecord(Employee, employeeId, req.body);
+    res.status(201).json({ message: "Attendance added successfully", employee });
   } catch (error) {
-    console.error("Error adding attendance:", error);
-    res.status(500).json({ message: "Failed to add attendance" });
+    next(error);
   }
 };
 
-exports.getEmployeeAttendance = async (req, res) => {
+exports.getEmployeeAttendance = async (req, res, next) => {
   try {
     const { employeeId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(employeeId)) {
-      return res.status(400).json({ message: "Invalid employee ID format" });
-    }
-    const employee = await Employee.findById(employeeId).select(
-      "name cnic attendance"
-    );
-    if (!employee) {
-      return res.status(404).json({ message: "Employee not found" });
-    }
-    res.json(employee.attendance);
+    const attendance = await attendanceService.getAttendanceRecords(Employee, employeeId);
+    res.json(attendance);
   } catch (error) {
-    console.error("Error fetching employee attendance:", error);
-    res.status(500).json({ message: "Failed to fetch employee attendance" });
+    next(error);
   }
 };
 
-exports.updateAttendance = async (req, res) => {
+exports.updateAttendance = async (req, res, next) => {
   try {
-    const { employeeId, attendanceDate: dateString } = req.params;
-    const { status, payment } = req.body;
-
-    if (!mongoose.Types.ObjectId.isValid(employeeId)) {
-      return res.status(400).json({ message: "Invalid employee ID format" });
-    }
-
-    const attendanceDate = new Date(dateString);
-    if (isNaN(attendanceDate.getTime())) {
-      return res
-        .status(400)
-        .json({ message: "Invalid date format. Use YYYY-MM-DD." });
-    }
-    attendanceDate.setUTCHours(0, 0, 0, 0);
-
-    const employee = await Employee.findById(employeeId);
-    if (!employee) {
-      return res.status(404).json({ message: "Employee not found" });
-    }
-
-    const attendanceIndex = employee.attendance.findIndex(
-      (att) => att.date.getTime() === attendanceDate.getTime()
-    );
-
-    if (attendanceIndex === -1) {
-      return res
-        .status(404)
-        .json({ message: "Attendance record not found for this date." });
-    }
-
-    if (status) employee.attendance[attendanceIndex].status = status;
-    if (payment) employee.attendance[attendanceIndex].payment = payment;
-
-    await employee.save();
+    const { employeeId, attendanceDate } = req.params;
+    const employee = await attendanceService.updateAttendanceRecord(Employee, employeeId, attendanceDate, req.body);
     res.json({ message: "Attendance updated successfully", employee });
   } catch (error) {
-    console.error("Error updating attendance:", error);
-    res.status(500).json({ message: "Failed to update attendance" });
+    next(error);
   }
 };
 
-exports.deleteAttendance = async (req, res) => {
+exports.deleteAttendance = async (req, res, next) => {
   try {
-    const { employeeId, attendanceDate: dateString } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(employeeId)) {
-      return res.status(400).json({ message: "Invalid employee ID format" });
-    }
-
-    const attendanceDate = new Date(dateString);
-    if (isNaN(attendanceDate.getTime())) {
-      return res
-        .status(400)
-        .json({ message: "Invalid date format. Use YYYY-MM-DD." });
-    }
-    attendanceDate.setUTCHours(0, 0, 0, 0);
-
-    const employee = await Employee.findById(employeeId);
-    if (!employee) {
-      return res.status(404).json({ message: "Employee not found" });
-    }
-
-    const initialLength = employee.attendance.length;
-    employee.attendance = employee.attendance.filter(
-      (att) => att.date.getTime() !== attendanceDate.getTime()
-    );
-
-    if (employee.attendance.length === initialLength) {
-      return res
-        .status(404)
-        .json({ message: "Attendance record not found for this date." });
-    }
-
-    await employee.save();
+    const { employeeId, attendanceDate } = req.params;
+    const employee = await attendanceService.deleteAttendanceRecord(Employee, employeeId, attendanceDate);
     res.json({ message: "Attendance deleted successfully", employee });
   } catch (error) {
-    console.error("Error deleting attendance:", error);
-    res.status(500).json({ message: "Failed to delete attendance" });
+    next(error);
   }
 };

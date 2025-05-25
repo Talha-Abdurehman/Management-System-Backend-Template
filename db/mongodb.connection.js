@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const dotenv = require("dotenv");
-dotenv.config();
+// dotenv.config(); // Removed, called in index.js
 
 const MONGO_URI = process.env.MONGO_URI;
 

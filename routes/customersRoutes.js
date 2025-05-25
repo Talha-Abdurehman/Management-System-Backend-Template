@@ -9,20 +9,32 @@ const {
   getCustomerById,
   getCustomerOrders,
   getCustomersWithOutstandingBalance,
+  getCustomersWithNoOutstandingBalance,
   searchCustomers,
   updateCustomer,
   updateCustomerOrder,
   updateCustomerPayment,
 } = require("../controllers/customersController");
 
-router.get("/customers", getAllCustomers);
-router.get("/customers/:id", getCustomerById);
-router.get("/customers/orders", getCustomerOrders);
+// Customer general routes
 router.post("/customers", createCustomer);
-router.put("/customers/:id/orders", addOrderToCustomer);
+router.get("/customers", getAllCustomers);
+// Specific string routes MUST come BEFORE parameterized routes like /:id
+router.get("/customers/search", searchCustomers);
+router.get("/customers/outstanding", getCustomersWithOutstandingBalance);
+router.get("/customers/paid-off", getCustomersWithNoOutstandingBalance);
+
+// Customer specific routes (parameterized)
+router.get("/customers/:id", getCustomerById);
 router.put("/customers/:id", updateCustomer);
-router.put("/customers/:id/orders/", updateCustomerOrder);
 router.delete("/customers/:id", deleteCustomer);
-router.delete("/customers/:id/orders", deleteCustomerOrder);
+router.put("/customers/:id/payment", updateCustomerPayment);
+
+// Customer's order specific routes (parameterized)
+router.get("/customers/:id/orders", getCustomerOrders);
+router.post("/customers/:id/orders", addOrderToCustomer);
+router.put("/customers/:id/orders/:orderId", updateCustomerOrder);
+router.delete("/customers/:id/orders/:orderId", deleteCustomerOrder);
+
 
 module.exports = router;

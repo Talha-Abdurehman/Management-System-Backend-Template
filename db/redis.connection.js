@@ -1,7 +1,7 @@
 // No longer needed: const { response } = require('express');
 const Redis = require('ioredis');
 const dotenv = require("dotenv");
-dotenv.config();
+// dotenv.config(); // Removed, called in index.js
 
 const REDIS_HOST = process.env.REDIS_HOST || '127.0.0.1'; // Default to localhost if not set
 const REDIS_PORT = parseInt(process.env.REDIS_PORT, 10) || 6379; // Default port

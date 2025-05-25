@@ -1,84 +1,86 @@
 const Item = require("../models/Items.model");
+const AppError = require('../utils/AppError');
+const mongoose = require('mongoose');
 
-exports.createItem = async (req, res) => {
+exports.createItem = async (req, res, next) => {
   try {
     const newItem = new Item(req.body);
     await newItem.save();
     res.status(201).json(newItem);
   } catch (error) {
-    console.error("Error creating item:", error);
-    if (error.code === 11000 && error.keyPattern && error.keyPattern.name) {
-      return res
-        .status(400)
-        .json({ message: `Item with name '${req.body.name}' already exists.` });
+    if (error.code === 11000 && error.keyPattern && error.keyPattern.product_name) {
+      return next(new AppError(`Item with product name '${req.body.product_name}' already exists.`, 400));
     }
-    res
-      .status(400)
-      .json({ message: error.message || "Failed to create item" });
+    if (error.name === 'ValidationError') {
+      return next(new AppError(error.message, 400));
+    }
+    next(new AppError(error.message || "Failed to create item", 500));
   }
 };
 
-exports.deleteItemById = async (req, res) => {
+exports.deleteItemById = async (req, res, next) => {
   try {
     const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return next(new AppError("Invalid item ID format", 400));
+    }
     const result = await Item.findByIdAndDelete(id);
-    if (!result) return res.status(404).json({ message: "Item not found" });
+    if (!result) return next(new AppError("Item not found", 404));
     res.json({ message: "Item deleted successfully" });
   } catch (error) {
-    console.error(`Error deleting item ${req.params.id}:`, error);
-    res
-      .status(500)
-      .json({ message: error.message || "Failed to delete item" });
+    next(new AppError(error.message || "Failed to delete item", 500));
   }
 };
 
-exports.fetchAllItems = async (req, res) => {
+exports.fetchAllItems = async (req, res, next) => {
   try {
-    const result = await Item.find();
+    const result = await Item.find().sort({ createdAt: -1 });
     if (!result || result.length === 0) {
-      return res.status(404).json({ Message: "No items found. Feels Empty!" });
+      // It's debatable if this should be a 404 or an empty 200.
+      // For consistency with "not found" for single items, 404 can be used if strict.
+      // However, an empty array is often a valid 200 response.
+      // Let's return 200 with an empty array.
+      return res.json([]);
     }
     res.json(result);
   } catch (error) {
-    console.error("Error fetching all items:", error);
-    res
-      .status(500)
-      .json({ message: error.message || "Failed to fetch items" });
+    next(new AppError(error.message || "Failed to fetch items", 500));
   }
 };
 
-exports.fetchById = async (req, res) => {
+exports.fetchById = async (req, res, next) => {
   try {
     const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return next(new AppError("Invalid item ID format", 400));
+    }
     const result = await Item.findById(id);
-    if (!result) return res.status(404).json({ Message: "Item Not Found" });
+    if (!result) return next(new AppError("Item Not Found", 404));
     res.json(result);
   } catch (error) {
-    console.error(`Error fetching item by ID ${req.params.id}:`, error);
-    res
-      .status(500)
-      .json({ message: `An Error Occurred: ${error.message}` });
+    next(new AppError(`An Error Occurred: ${error.message}`, 500));
   }
 };
 
-exports.updateById = async (req, res) => {
+exports.updateById = async (req, res, next) => {
   try {
     const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return next(new AppError("Invalid item ID format", 400));
+    }
     const result = await Item.findByIdAndUpdate(id, req.body, {
       new: true,
       runValidators: true,
     });
-    if (!result) return res.status(404).json({ Message: "Item Not Found" });
+    if (!result) return next(new AppError("Item Not Found", 404));
     res.status(200).json({ Message: "Updated Successfully", item: result });
   } catch (error) {
-    console.error(`Error updating item ${req.params.id}:`, error);
-    if (error.code === 11000 && error.keyPattern && error.keyPattern.name) {
-      return res
-        .status(400)
-        .json({ message: `Item with name '${req.body.name}' already exists.` });
+    if (error.code === 11000 && error.keyPattern && error.keyPattern.product_name) {
+      return next(new AppError(`Item with product name '${req.body.product_name}' already exists.`, 400));
     }
-    return res
-      .status(500)
-      .json({ message: `An Error Occurred: ${error.message}` });
+    if (error.name === 'ValidationError') {
+      return next(new AppError(error.message, 400));
+    }
+    next(new AppError(`An Error Occurred: ${error.message}`, 500));
   }
 };
