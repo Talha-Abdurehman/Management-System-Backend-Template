@@ -94,37 +94,91 @@ async function attemptBusinessHistoryUpdate(
 
 
 exports.createOrder = async (req, res, next) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
   try {
-    // Basic validation (more can be added in a service layer)
-    if (!req.body.customer || !mongoose.Types.ObjectId.isValid(req.body.customer)) {
-      return next(new AppError("Valid customer ID is required.", 400));
-    }
     if (!req.body.invoice_id) {
+      await session.abortTransaction(); session.endSession();
       return next(new AppError("Invoice ID is required.", 400));
     }
     if (!req.body.order_items || req.body.order_items.length === 0) {
+      await session.abortTransaction(); session.endSession();
       return next(new AppError("Order must contain at least one item.", 400));
     }
 
-    const newOrder = new Orders(req.body);
-    await newOrder.save();
+    const customerId = req.body.customer;
+    if (customerId && !mongoose.Types.ObjectId.isValid(customerId)) {
+      await session.abortTransaction(); session.endSession();
+      return next(new AppError("Invalid Customer ID format provided.", 400));
+    }
+
+    const newOrderData = { ...req.body };
+    // Ensure customer field is set correctly, even if it was null/undefined initially in req.body
+    // but then a customer was created and ID obtained by frontend (as in OrderCompositionPod flow)
+    if (customerId) {
+      newOrderData.customer = customerId;
+    } else {
+      delete newOrderData.customer; // Ensure it's not present if no customerId
+    }
+
+
+    const newOrder = new Orders(newOrderData);
+    await newOrder.save({ session });
+
+    // If a customer is associated with this order, update the customer's cOrders and recalculate balance
+    if (newOrder.customer) {
+      const CustomerModel = mongoose.model("Customers"); // Get Customer model
+      const customer = await CustomerModel.findById(newOrder.customer).session(session);
+      if (customer) {
+        // Check if order ID already exists to prevent duplicates if hook also runs
+        if (!customer.cOrders.map(id => id.toString()).includes(newOrder._id.toString())) {
+          customer.cOrders.push(newOrder._id);
+          await customer.save({ session }); // Save customer to update cOrders array
+        }
+        // Explicitly recalculate balances now that customer's cOrders array is guaranteed to be updated
+        // within this transaction before populate is called by recalculateBalances.
+        console.log(`[OrderController.createOrder] Explicitly calling recalculateBalances for customer ${customer._id} after adding order ${newOrder._id}`);
+        await customer.recalculateBalances({ session });
+      } else {
+        console.warn(`[OrderController.createOrder] Customer with ID ${newOrder.customer} not found when trying to link order ${newOrder._id}. Order saved without explicit customer link update balance recalculation here.`);
+        // If customer not found, it's an issue, but the order is saved.
+        // The OrderModel's post-save hook might still attempt to find and update the customer.
+      }
+    }
+
 
     const orderDateForHistory = newOrder.createdAt;
-    const profitForThisOrder = newOrder.total_price; // Assuming total_price is profit for now
+    const profitForThisOrder = newOrder.total_price;
     const ordersInThisTransaction = 1;
-
-    // Fire-and-forget, but ideally, this would be a more robust job queue
     attemptBusinessHistoryUpdate(orderDateForHistory, profitForThisOrder, ordersInThisTransaction);
 
-    res.status(201).json({ Message: "Created Successfully", order: newOrder });
+    await session.commitTransaction();
+    // Populate customer details if they were part of the request and are needed in the response
+    let finalOrderResponse = newOrder.toObject();
+    if (newOrder.customer && typeof newOrder.customer !== 'string') { // if populated
+      // no action needed, already populated by Mongoose if schema is set up for it
+    } else if (newOrder.customer) { // if it's an ID, try to populate
+      try {
+        const populatedOrder = await Orders.findById(newOrder._id).populate('customer', 'cName cNIC').session(session);
+        if (populatedOrder) finalOrderResponse = populatedOrder.toObject();
+      } catch (popErr) {
+        console.error(`[OrderController.createOrder] Error populating customer for response: ${popErr.message}`);
+      }
+    }
+
+    res.status(201).json({ Message: "Created Successfully", order: finalOrderResponse });
   } catch (err) {
+    await session.abortTransaction();
     if (err.code === 11000 && err.keyPattern && err.keyPattern.invoice_id) {
       return next(new AppError(`Invoice ID '${err.keyValue.invoice_id}' already exists.`, 400));
     }
     if (err.name === 'ValidationError') {
       return next(new AppError(err.message, 400));
     }
+    console.error(`[OrderController.createOrder] Catch Block Error: ${err.stack || err.message}`);
     next(new AppError(`Error Creating Order: ${err.message}`, 500));
+  } finally {
+    session.endSession();
   }
 };
 

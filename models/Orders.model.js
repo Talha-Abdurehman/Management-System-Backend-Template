@@ -151,23 +151,21 @@ OrdersSchema.methods.addPayment = async function (paymentDetails) {
       payment_date: paymentDetails.payment_date || new Date(),
     });
 
+    // Saving the order will trigger its pre-save (to update order's own balances)
+    // and post-save (to call customer.recalculateBalances()) hooks.
+    // These hooks will use the session if this save is part of an existing session,
+    // or operate without if not.
     await this.save({ session });
 
-
-    const Customer = mongoose.model("Customers");
-    const customer = await Customer.findById(this.customer).session(session);
-
-    if (!customer) {
-      throw new Error("Customer not found for this order.");
-    }
-
-
-    customer.cPaidAmount += paymentDetails.amount;
-
-    await customer.save({ session });
-
+    // The customer's balance, including cPaidAmount if it's derived from orders,
+    // will be correctly updated by the customer.recalculateBalances() method
+    // called from this order's post-save hook.
+    // No direct customer.cPaidAmount manipulation or customer.save() is needed here anymore.
 
     await session.commitTransaction();
+    // Populate customer details before returning the order if needed by frontend
+    // Or ensure the frontend re-fetches if it needs the updated customer.
+    // For now, just returning 'this' (the order) is fine, as hooks handle customer.
     return this;
   } catch (error) {
     await session.abortTransaction();
