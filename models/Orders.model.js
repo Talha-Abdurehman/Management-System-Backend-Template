@@ -75,7 +75,7 @@ const OrdersSchema = new mongoose.Schema(
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customers",
-      required: true,
+      // required: true, // Customer is now optional
     },
   },
   { timestamps: true }
@@ -153,6 +153,7 @@ OrdersSchema.methods.addPayment = async function (paymentDetails) {
 
     await this.save({ session });
 
+
     const Customer = mongoose.model("Customers");
     const customer = await Customer.findById(this.customer).session(session);
 
@@ -160,18 +161,11 @@ OrdersSchema.methods.addPayment = async function (paymentDetails) {
       throw new Error("Customer not found for this order.");
     }
 
+
     customer.cPaidAmount += paymentDetails.amount;
-    // Recalculate customer outstanding based on ALL their orders' outstanding amounts
-    // This can be deferred to a separate job or a customer.recalculateBalances() method
-    // For immediate consistency after THIS payment:
-    const oldOrderOutstanding = this.total_price - (this.order_paid_amount - paymentDetails.amount); // outstanding before this payment
-    const reductionInOrderOutstanding = oldOrderOutstanding - this.order_outstanding_amount;
-    customer.cOutstandingAmt -= reductionInOrderOutstanding;
-
-    if (customer.cOutstandingAmt < 0) customer.cOutstandingAmt = 0;
-
 
     await customer.save({ session });
+
 
     await session.commitTransaction();
     return this;
@@ -182,5 +176,51 @@ OrdersSchema.methods.addPayment = async function (paymentDetails) {
     session.endSession();
   }
 };
+
+async function updateCustomerBalance(doc, session) {
+  if (doc && doc.customer) {
+    const Customer = mongoose.model("Customers");
+    const customer = await Customer.findById(doc.customer).session(session);
+    if (customer) {
+      await customer.recalculateBalances({ session });
+    }
+  }
+}
+
+OrdersSchema.post("save", async function (doc, next) {
+  const session = doc.$session();
+  try {
+    await updateCustomerBalance(doc, session);
+    next();
+  } catch (error) {
+    console.error("Error in Order post-save hook:", error);
+    next(error);
+  }
+});
+
+OrdersSchema.post("findOneAndUpdate", async function (doc, next) {
+
+  const session = this.mongooseOptions.session;
+  try {
+    await updateCustomerBalance(doc, session);
+    next();
+  } catch (error) {
+    console.error("Error in Order post-findOneAndUpdate hook:", error);
+    next(error);
+  }
+});
+
+OrdersSchema.post("findOneAndDelete", async function (doc, next) {
+
+  const session = this.mongooseOptions.session;
+  try {
+    await updateCustomerBalance(doc, session);
+    next();
+  } catch (error) {
+    console.error("Error in Order post-findOneAndDelete hook:", error);
+    next(error);
+  }
+});
+
 
 module.exports = mongoose.model("Orders", OrdersSchema);
