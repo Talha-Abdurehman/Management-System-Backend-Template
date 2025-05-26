@@ -208,10 +208,10 @@ async function updateCustomerBalance(doc, session) {
 OrdersSchema.post("save", async function (doc, next) {
   const session = doc.$session();
   try {
-    await updateCustomerBalance(doc, session);
+    // await updateCustomerBalance(doc, session); // Removed: Controller will handle for new orders.
     next();
   } catch (error) {
-    console.error("Error in Order post-save hook:", error);
+    console.error("Error in Order post-save hook (was for updateCustomerBalance):", error);
     next(error);
   }
 });

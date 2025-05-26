@@ -132,10 +132,11 @@ exports.createOrder = async (req, res, next) => {
       if (customer) {
         if (!customer.cOrders.map(id => id.toString()).includes(newOrder._id.toString())) {
           customer.cOrders.push(newOrder._id);
-          await customer.save({ session });
+          // No explicit customer.save() here, as recalculateBalances will save it.
         }
-        // The balance recalculation is now solely handled by the Order model's post-save hook.
-        // The explicit call here was redundant.
+        // Explicitly recalculate customer balance AFTER order is known and its ID is in customer.cOrders (in memory for this instance).
+        // The recalculateBalances method handles saving the customer.
+        await customer.recalculateBalances({ session });
       } else {
         console.warn(`[OrderController.createOrder] Customer with ID ${newOrder.customer} not found when trying to link order ${newOrder._id}. Order saved without explicit customer link update balance recalculation here.`);
       }
