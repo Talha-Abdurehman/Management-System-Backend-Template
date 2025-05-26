@@ -17,4 +17,11 @@ router.put("/items/:id", itemsController.updateById);
 
 router.post("/items/batch-update-stock", itemsController.batchUpdateStock);
 
+// Category Management Routes
+router.get("/categories", itemsController.getAllCategories);
+
+const adminMiddleware = require("../middleware/adminMiddleware");
+router.put("/categories/rename", adminMiddleware, itemsController.renameCategory);
+
+
 module.exports = router;

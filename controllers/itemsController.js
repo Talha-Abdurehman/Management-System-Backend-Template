@@ -36,10 +36,6 @@ exports.fetchAllItems = async (req, res, next) => {
   try {
     const result = await Item.find().sort({ createdAt: -1 });
     if (!result || result.length === 0) {
-      // It's debatable if this should be a 404 or an empty 200.
-      // For consistency with "not found" for single items, 404 can be used if strict.
-      // However, an empty array is often a valid 200 response.
-      // Let's return 200 with an empty array.
       return res.json([]);
     }
     res.json(result);
@@ -87,7 +83,7 @@ exports.updateById = async (req, res, next) => {
 
 exports.batchUpdateStock = async (req, res, next) => {
   try {
-    const updates = req.body; // Expected format: [{ itemId: "id", quantityChange: -2 }, ...]
+    const updates = req.body;
 
     if (!Array.isArray(updates) || updates.length === 0) {
       return next(new AppError("Invalid request body: Expected an array of stock updates.", 400));
@@ -118,12 +114,73 @@ exports.batchUpdateStock = async (req, res, next) => {
     }
 
   } catch (error) {
-    if (error instanceof AppError) { // Pass through AppErrors
+    if (error instanceof AppError) {
       return next(error);
     }
     if (error.name === 'CastError' && error.path === '_id') {
       return next(new AppError("Invalid item ID format in batch update.", 400));
     }
     next(new AppError(error.message || "Failed to batch update stock", 500));
+  }
+};
+
+exports.getAllCategories = async (req, res, next) => {
+  try {
+    const categories = await Item.distinct('product_category');
+    categories.sort(); // Optional: sort alphabetically
+    res.json(categories);
+  } catch (error) {
+    next(new AppError(error.message || "Failed to fetch categories", 500));
+  }
+};
+
+exports.renameCategory = async (req, res, next) => {
+  try {
+    const { oldName, newName } = req.body;
+
+    if (!oldName || !newName) {
+      return next(new AppError("Both oldName and newName are required.", 400));
+    }
+    if (typeof oldName !== 'string' || typeof newName !== 'string') {
+      return next(new AppError("Category names must be strings.", 400));
+    }
+    if (newName.trim() === "") {
+      return next(new AppError("New category name cannot be empty.", 400));
+    }
+    if (oldName === newName) {
+      return res.json({ message: "Old and new category names are the same. No changes made.", modifiedCount: 0 });
+    }
+
+    // Check if the old category name exists
+    const oldCategoryExists = await Item.findOne({ product_category: oldName });
+    if (!oldCategoryExists) {
+      return next(new AppError(`Category '${oldName}' not found.`, 404));
+    }
+
+    // Optional: Check if the new category name already exists (to prevent unintentional merging)
+    // Depending on desired behavior, you might allow merging or prevent it.
+    // For this implementation, we'll allow it but log if it happens.
+    const newCategoryAlreadyExists = await Item.findOne({ product_category: newName });
+    if (newCategoryAlreadyExists) {
+      console.warn(`Warning: Renaming category '${oldName}' to '${newName}', which already exists. Items will be merged under '${newName}'.`);
+    }
+
+    const result = await Item.updateMany(
+      { product_category: oldName },
+      { $set: { product_category: newName } }
+    );
+
+    if (result.modifiedCount === 0 && !newCategoryAlreadyExists) {
+      // This could happen if oldName was valid but no items matched during the updateMany call,
+      // which shouldn't occur if oldCategoryExists check passed. Or concurrency issue.
+      return res.json({ message: `No items found for category '${oldName}' to update.`, modifiedCount: 0 });
+    }
+
+    res.json({ message: `Category '${oldName}' successfully renamed to '${newName}'.`, modifiedCount: result.modifiedCount });
+  } catch (error) {
+    if (error.name === 'ValidationError') {
+      return next(new AppError(error.message, 400));
+    }
+    next(new AppError(error.message || "Failed to rename category", 500));
   }
 };
