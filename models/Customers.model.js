@@ -24,34 +24,33 @@ CustomersSchema.methods.recalculateBalances = async function (options = {}) {
   const OrderModel = mongoose.model("Orders");
 
   try {
-    const result = await OrderModel.aggregate([
-      { $match: { _id: { $in: this.cOrders || [] } } }, // Ensure cOrders is not null
+    const balanceAggregation = await OrderModel.aggregate([
+      { $match: { _id: { $in: this.cOrders || [] } } },
       {
         $group: {
-          _id: null,
-          totalOutstandingSum: { $sum: "$order_outstanding_amount" }
+          _id: null, // Group all orders for this customer together
+          totalPaidAcrossOrders: { $sum: "$order_paid_amount" }, // Sum of order_paid_amount of each order
+          totalOutstandingSum: { $sum: "$order_outstanding_amount" } // Sum of order_outstanding_amount
         }
       }
     ]).session(session || null);
 
     let newOutstandingAmt = 0;
-    if (result.length > 0 && result[0].totalOutstandingSum !== undefined) {
-      newOutstandingAmt = result[0].totalOutstandingSum;
+    let newPaidAmt = 0;
+
+    if (balanceAggregation.length > 0 && balanceAggregation[0]) {
+      newPaidAmt = balanceAggregation[0].totalPaidAcrossOrders || 0;
+      newOutstandingAmt = balanceAggregation[0].totalOutstandingSum || 0;
     }
 
+    this.cPaidAmount = Math.max(0, newPaidAmt);
     this.cOutstandingAmt = Math.max(0, newOutstandingAmt);
-
-    // cPaidAmount is not recalculated here. It's managed by direct customer payments
-    // and potentially reflected through order_paid_amount sums if a different strategy is adopted.
-    // For now, this method solely focuses on deriving cOutstandingAmt from linked orders.
 
     await this.save({ session });
     return this;
   } catch (error) {
-    // It's good practice to log errors that occur during critical financial calculations
     console.error(`Error in recalculateBalances for customer ${this._id}: ${error.message}`, error);
-    // Depending on policy, you might want to re-throw or handle gracefully
-    throw error; // Re-throw to ensure calling functions are aware of failure
+    throw error;
   }
 };
 
