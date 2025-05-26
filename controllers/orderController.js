@@ -170,6 +170,16 @@ exports.createOrder = async (req, res, next) => {
       }
     }
 
+    // Populate for the response, including item details
+    let populatedOrderForResponse = await Orders.findById(newOrder._id)
+      .populate('customer', 'cName cNIC')
+      .populate('order_items.item', 'product_name retail_price wholesale_price product_category') // Ensure product_category is populated
+      .session(session); // Or without .session(session) if transaction is committed and closed.
+    // If session is active, using it is safer.
+
+    finalOrderResponse = populatedOrderForResponse ? populatedOrderForResponse.toObject() : newOrder.toObject();
+
+
     res.status(201).json({ Message: "Created Successfully", order: finalOrderResponse });
   } catch (err) {
     await session.abortTransaction();

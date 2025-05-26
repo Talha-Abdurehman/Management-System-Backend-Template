@@ -11,6 +11,8 @@ const OrderItemSchema = new mongoose.Schema({
     ref: "Item",
     required: true,
   },
+  product_name_snapshot: { type: String, required: false },
+  product_category_snapshot: { type: String, required: false },
   quantity: {
     type: Number,
     required: true,
