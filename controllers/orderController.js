@@ -145,7 +145,15 @@ exports.createOrder = async (req, res, next) => {
     const orderDateForHistory = newOrder.createdAt;
     const profitForThisOrder = newOrder.total_price;
     const ordersInThisTransaction = 1;
-    attemptBusinessHistoryUpdate(orderDateForHistory, profitForThisOrder, ordersInThisTransaction);
+
+    // Asynchronously update business history; do not await.
+    // This allows the order creation to respond faster.
+    // Business history updates are eventually consistent.
+    attemptBusinessHistoryUpdate(orderDateForHistory, profitForThisOrder, ordersInThisTransaction)
+      .catch(historyUpdateError => {
+        // Log errors from the background task, but don't let it block the main flow.
+        console.error(`BACKGROUND_ERROR: Business history update failed for order ${newOrder._id}: ${historyUpdateError.message}`);
+      });
 
     await session.commitTransaction();
     // Populate customer details if they were part of the request and are needed in the response
