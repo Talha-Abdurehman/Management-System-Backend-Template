@@ -127,22 +127,17 @@ exports.createOrder = async (req, res, next) => {
 
     // If a customer is associated with this order, update the customer's cOrders and recalculate balance
     if (newOrder.customer) {
-      const CustomerModel = mongoose.model("Customers"); // Get Customer model
+      const CustomerModel = mongoose.model("Customers");
       const customer = await CustomerModel.findById(newOrder.customer).session(session);
       if (customer) {
-        // Check if order ID already exists to prevent duplicates if hook also runs
         if (!customer.cOrders.map(id => id.toString()).includes(newOrder._id.toString())) {
           customer.cOrders.push(newOrder._id);
-          await customer.save({ session }); // Save customer to update cOrders array
+          await customer.save({ session });
         }
-        // Explicitly recalculate balances now that customer's cOrders array is guaranteed to be updated
-        // within this transaction before populate is called by recalculateBalances.
-        console.log(`[OrderController.createOrder] Explicitly calling recalculateBalances for customer ${customer._id} after adding order ${newOrder._id}`);
-        await customer.recalculateBalances({ session });
+        // The balance recalculation is now solely handled by the Order model's post-save hook.
+        // The explicit call here was redundant.
       } else {
         console.warn(`[OrderController.createOrder] Customer with ID ${newOrder.customer} not found when trying to link order ${newOrder._id}. Order saved without explicit customer link update balance recalculation here.`);
-        // If customer not found, it's an issue, but the order is saved.
-        // The OrderModel's post-save hook might still attempt to find and update the customer.
       }
     }
 

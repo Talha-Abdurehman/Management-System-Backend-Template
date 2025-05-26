@@ -15,4 +15,6 @@ router.get("/items/:id", itemsController.fetchById);
 
 router.put("/items/:id", itemsController.updateById);
 
+router.post("/items/batch-update-stock", itemsController.batchUpdateStock);
+
 module.exports = router;

@@ -84,3 +84,46 @@ exports.updateById = async (req, res, next) => {
     next(new AppError(`An Error Occurred: ${error.message}`, 500));
   }
 };
+
+exports.batchUpdateStock = async (req, res, next) => {
+  try {
+    const updates = req.body; // Expected format: [{ itemId: "id", quantityChange: -2 }, ...]
+
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return next(new AppError("Invalid request body: Expected an array of stock updates.", 400));
+    }
+
+    const bulkOps = updates.map(update => {
+      if (!update.itemId || typeof update.quantityChange !== 'number') {
+        throw new AppError("Invalid update format: Each update must have itemId and quantityChange.", 400);
+      }
+      return {
+        updateOne: {
+          filter: { _id: new mongoose.Types.ObjectId(update.itemId) },
+          update: { $inc: { product_quantity: update.quantityChange } }
+        }
+      };
+    });
+
+    if (bulkOps.length > 0) {
+      const result = await Item.bulkWrite(bulkOps);
+      res.status(200).json({
+        message: "Stock quantities updated.",
+        matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount,
+        upsertedCount: result.upsertedCount,
+      });
+    } else {
+      res.status(200).json({ message: "No stock updates to perform." });
+    }
+
+  } catch (error) {
+    if (error instanceof AppError) { // Pass through AppErrors
+      return next(error);
+    }
+    if (error.name === 'CastError' && error.path === '_id') {
+      return next(new AppError("Invalid item ID format in batch update.", 400));
+    }
+    next(new AppError(error.message || "Failed to batch update stock", 500));
+  }
+};
