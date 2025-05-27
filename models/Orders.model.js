@@ -11,6 +11,8 @@ const OrderItemSchema = new mongoose.Schema({
     ref: "Item",
     required: true,
   },
+  product_name_snapshot: { type: String, required: false },
+  product_category_snapshot: { type: String, required: false },
   quantity: {
     type: Number,
     required: true,
@@ -208,10 +210,10 @@ async function updateCustomerBalance(doc, session) {
 OrdersSchema.post("save", async function (doc, next) {
   const session = doc.$session();
   try {
-    await updateCustomerBalance(doc, session);
+    await updateCustomerBalance(doc, session); // Restored: This is crucial for order updates affecting customer balance.
     next();
   } catch (error) {
-    console.error("Error in Order post-save hook:", error);
+    console.error("Error in Order post-save hook (for updateCustomerBalance):", error);
     next(error);
   }
 });

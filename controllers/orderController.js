@@ -127,22 +127,18 @@ exports.createOrder = async (req, res, next) => {
 
     // If a customer is associated with this order, update the customer's cOrders and recalculate balance
     if (newOrder.customer) {
-      const CustomerModel = mongoose.model("Customers"); // Get Customer model
+      const CustomerModel = mongoose.model("Customers");
       const customer = await CustomerModel.findById(newOrder.customer).session(session);
       if (customer) {
-        // Check if order ID already exists to prevent duplicates if hook also runs
         if (!customer.cOrders.map(id => id.toString()).includes(newOrder._id.toString())) {
           customer.cOrders.push(newOrder._id);
-          await customer.save({ session }); // Save customer to update cOrders array
+          // No explicit customer.save() here, as recalculateBalances will save it.
         }
-        // Explicitly recalculate balances now that customer's cOrders array is guaranteed to be updated
-        // within this transaction before populate is called by recalculateBalances.
-        console.log(`[OrderController.createOrder] Explicitly calling recalculateBalances for customer ${customer._id} after adding order ${newOrder._id}`);
+        // Explicitly recalculate customer balance AFTER order is known and its ID is in customer.cOrders (in memory for this instance).
+        // The recalculateBalances method handles saving the customer.
         await customer.recalculateBalances({ session });
       } else {
         console.warn(`[OrderController.createOrder] Customer with ID ${newOrder.customer} not found when trying to link order ${newOrder._id}. Order saved without explicit customer link update balance recalculation here.`);
-        // If customer not found, it's an issue, but the order is saved.
-        // The OrderModel's post-save hook might still attempt to find and update the customer.
       }
     }
 
@@ -150,7 +146,15 @@ exports.createOrder = async (req, res, next) => {
     const orderDateForHistory = newOrder.createdAt;
     const profitForThisOrder = newOrder.total_price;
     const ordersInThisTransaction = 1;
-    attemptBusinessHistoryUpdate(orderDateForHistory, profitForThisOrder, ordersInThisTransaction);
+
+    // Asynchronously update business history; do not await.
+    // This allows the order creation to respond faster.
+    // Business history updates are eventually consistent.
+    attemptBusinessHistoryUpdate(orderDateForHistory, profitForThisOrder, ordersInThisTransaction)
+      .catch(historyUpdateError => {
+        // Log errors from the background task, but don't let it block the main flow.
+        console.error(`BACKGROUND_ERROR: Business history update failed for order ${newOrder._id}: ${historyUpdateError.message}`);
+      });
 
     await session.commitTransaction();
     // Populate customer details if they were part of the request and are needed in the response
@@ -165,6 +169,16 @@ exports.createOrder = async (req, res, next) => {
         console.error(`[OrderController.createOrder] Error populating customer for response: ${popErr.message}`);
       }
     }
+
+    // Populate for the response, including item details
+    let populatedOrderForResponse = await Orders.findById(newOrder._id)
+      .populate('customer', 'cName cNIC')
+      .populate('order_items.item', 'product_name retail_price wholesale_price product_category') // Ensure product_category is populated
+      .session(session); // Or without .session(session) if transaction is committed and closed.
+    // If session is active, using it is safer.
+
+    finalOrderResponse = populatedOrderForResponse ? populatedOrderForResponse.toObject() : newOrder.toObject();
+
 
     res.status(201).json({ Message: "Created Successfully", order: finalOrderResponse });
   } catch (err) {
