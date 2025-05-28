@@ -256,3 +256,39 @@ exports.deleteCategoryByName = async (req, res, next) => {
     next(new AppError(error.message || "Failed to delete category", 500));
   }
 };
+
+exports.batchDeleteCategories = async (req, res, next) => {
+  try {
+    const { names } = req.body; // Expecting an array of category names
+
+    if (!names || !Array.isArray(names) || names.length === 0) {
+      return next(new AppError("Array of category names is required for batch deletion.", 400));
+    }
+
+    // Sanitize names (trimming)
+    const trimmedNames = names.map(name => name.trim()).filter(name => name !== "");
+    if (trimmedNames.length === 0) {
+      return next(new AppError("No valid category names provided after trimming.", 400));
+    }
+
+    // Case-insensitive matching for deletion from Category collection
+    const categoryDeletionResult = await Category.deleteMany({
+      name: { $in: trimmedNames.map(name => new RegExp(`^${name}$`, 'i')) }
+    });
+
+    // Update items that used these categories (case-insensitive match)
+    const itemUpdateResult = await Item.updateMany(
+      { product_category: { $in: trimmedNames.map(name => new RegExp(`^${name}$`, 'i')) } },
+      { $set: { product_category: "No Category" } }
+    );
+
+    res.json({
+      message: `Batch delete operation complete. ${categoryDeletionResult.deletedCount} categories removed. ${itemUpdateResult.modifiedCount} items updated.`,
+      categoriesDeletedCount: categoryDeletionResult.deletedCount,
+      itemsUpdatedCount: itemUpdateResult.modifiedCount,
+    });
+
+  } catch (error) {
+    next(new AppError(error.message || "Failed to batch delete categories", 500));
+  }
+};
