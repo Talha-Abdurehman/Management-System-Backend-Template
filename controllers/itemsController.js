@@ -1,4 +1,5 @@
 const Item = require("../models/Items.model");
+const Category = require("../models/Category.model");
 const AppError = require('../utils/AppError');
 const mongoose = require('mongoose');
 
@@ -124,11 +125,38 @@ exports.batchUpdateStock = async (req, res, next) => {
   }
 };
 
+exports.createCategory = async (req, res, next) => {
+  try {
+    const { name } = req.body;
+    if (!name || name.trim() === "") {
+      return next(new AppError("Category name is required.", 400));
+    }
+
+    // Case-insensitive check for existing category
+    const existingCategory = await Category.findOne({ name: { $regex: `^${name.trim()}$`, $options: 'i' } });
+    if (existingCategory) {
+      return next(new AppError(`Category '${name.trim()}' already exists.`, 400));
+    }
+
+    const newCategory = new Category({ name: name.trim() });
+    await newCategory.save();
+    res.status(201).json({ message: "Category created successfully", category: newCategory });
+  } catch (error) {
+    if (error.code === 11000) { // Mongoose unique index violation (fallback)
+      return next(new AppError(`Category '${req.body.name.trim()}' already exists.`, 400));
+    }
+    if (error.name === 'ValidationError') {
+      return next(new AppError(error.message, 400));
+    }
+    next(new AppError(error.message || "Failed to create category", 500));
+  }
+};
+
 exports.getAllCategories = async (req, res, next) => {
   try {
-    const categories = await Item.distinct('product_category');
-    categories.sort(); // Optional: sort alphabetically
-    res.json(categories);
+    const categories = await Category.find().sort({ name: 1 }); // Sort alphabetically by name
+    const categoryNames = categories.map(cat => cat.name);
+    res.json(categoryNames);
   } catch (error) {
     next(new AppError(error.message || "Failed to fetch categories", 500));
   }
@@ -144,43 +172,87 @@ exports.renameCategory = async (req, res, next) => {
     if (typeof oldName !== 'string' || typeof newName !== 'string') {
       return next(new AppError("Category names must be strings.", 400));
     }
-    if (newName.trim() === "") {
+
+    const trimmedNewName = newName.trim();
+    if (trimmedNewName === "") {
       return next(new AppError("New category name cannot be empty.", 400));
     }
-    if (oldName === newName) {
+    if (oldName.trim().toLowerCase() === trimmedNewName.toLowerCase()) {
       return res.json({ message: "Old and new category names are the same. No changes made.", modifiedCount: 0 });
     }
 
-    // Check if the old category name exists
-    const oldCategoryExists = await Item.findOne({ product_category: oldName });
-    if (!oldCategoryExists) {
-      return next(new AppError(`Category '${oldName}' not found.`, 404));
+    // Check if the old category name exists in the Category collection
+    const categoryToUpdate = await Category.findOne({ name: { $regex: `^${oldName.trim()}$`, $options: 'i' } });
+    if (!categoryToUpdate) {
+      return next(new AppError(`Category '${oldName.trim()}' not found.`, 404));
     }
 
-    // Optional: Check if the new category name already exists (to prevent unintentional merging)
-    // Depending on desired behavior, you might allow merging or prevent it.
-    // For this implementation, we'll allow it but log if it happens.
-    const newCategoryAlreadyExists = await Item.findOne({ product_category: newName });
-    if (newCategoryAlreadyExists) {
-      console.warn(`Warning: Renaming category '${oldName}' to '${newName}', which already exists. Items will be merged under '${newName}'.`);
+    // Check if the new category name already exists (case-insensitive)
+    const newNameExists = await Category.findOne({
+      name: { $regex: `^${trimmedNewName}$`, $options: 'i' },
+      _id: { $ne: categoryToUpdate._id } // Exclude the current category being renamed
+    });
+    if (newNameExists) {
+      return next(new AppError(`Category name '${trimmedNewName}' already exists.`, 400));
     }
 
-    const result = await Item.updateMany(
-      { product_category: oldName },
-      { $set: { product_category: newName } }
+    // Update category name in Category collection
+    categoryToUpdate.name = trimmedNewName;
+    await categoryToUpdate.save();
+
+    // Update product_category field in all relevant Items
+    const itemUpdateResult = await Item.updateMany(
+      { product_category: oldName }, // Case-sensitive match for updating items might be intended
+      // Or use: { product_category: { $regex: `^${oldName.trim()}$`, $options: 'i' } } for case-insensitive match on items
+      { $set: { product_category: trimmedNewName } }
     );
 
-    if (result.modifiedCount === 0 && !newCategoryAlreadyExists) {
-      // This could happen if oldName was valid but no items matched during the updateMany call,
-      // which shouldn't occur if oldCategoryExists check passed. Or concurrency issue.
-      return res.json({ message: `No items found for category '${oldName}' to update.`, modifiedCount: 0 });
-    }
+    res.json({
+      message: `Category '${oldName.trim()}' successfully renamed to '${trimmedNewName}'. Updated ${itemUpdateResult.modifiedCount} items.`,
+      modifiedItemCount: itemUpdateResult.modifiedCount,
+      updatedCategory: categoryToUpdate
+    });
 
-    res.json({ message: `Category '${oldName}' successfully renamed to '${newName}'.`, modifiedCount: result.modifiedCount });
   } catch (error) {
     if (error.name === 'ValidationError') {
       return next(new AppError(error.message, 400));
     }
+    if (error.code === 11000) { // Mongoose unique index violation on Category collection
+      return next(new AppError(`Category name '${req.body.newName.trim()}' already exists.`, 400));
+    }
     next(new AppError(error.message || "Failed to rename category", 500));
+  }
+};
+
+exports.deleteCategoryByName = async (req, res, next) => {
+  try {
+    const categoryName = req.params.name;
+    if (!categoryName || categoryName.trim() === "") {
+      return next(new AppError("Category name parameter is required.", 400));
+    }
+
+    // Find and delete the category (case-insensitive)
+    const categoryToDelete = await Category.findOneAndDelete({
+      name: { $regex: `^${categoryName.trim()}$`, $options: 'i' }
+    });
+
+    if (!categoryToDelete) {
+      return next(new AppError(`Category '${categoryName.trim()}' not found.`, 404));
+    }
+
+    // Update items that used this category
+    const updateResult = await Item.updateMany(
+      { product_category: { $regex: `^${categoryName.trim()}$`, $options: 'i' } }, // Match items with the category name (case-insensitive)
+      { $set: { product_category: "No Category" } }
+    );
+
+    res.json({
+      message: `Category '${categoryToDelete.name}' deleted successfully. ${updateResult.modifiedCount} items updated to 'No Category'.`,
+      deletedCategory: categoryToDelete,
+      itemsUpdatedCount: updateResult.modifiedCount
+    });
+
+  } catch (error) {
+    next(new AppError(error.message || "Failed to delete category", 500));
   }
 };

@@ -18,10 +18,12 @@ router.put("/items/:id", itemsController.updateById);
 router.post("/items/batch-update-stock", itemsController.batchUpdateStock);
 
 // Category Management Routes
-router.get("/categories", itemsController.getAllCategories);
-
 const adminMiddleware = require("../middleware/adminMiddleware");
+
+router.get("/categories", itemsController.getAllCategories);
+router.post("/categories", adminMiddleware, itemsController.createCategory);
 router.put("/categories/rename", adminMiddleware, itemsController.renameCategory);
+router.delete("/categories/:name", adminMiddleware, itemsController.deleteCategoryByName); // New route for deleting categories
 
 
 module.exports = router;
