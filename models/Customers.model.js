@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const CustomersSchema = new mongoose.Schema(
   {
     cName: { type: String, required: true },
-    cNIC: { type: String, required: true, unique: true },
+    cNIC: { type: String, unique: true, sparse: true }, // Made optional, sparse index for uniqueness if present
     cPhone: { type: String, required: true, unique: true },
     cAddress: { type: String },
     cPaidAmount: { type: Number, required: true },

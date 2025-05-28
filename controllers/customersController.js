@@ -11,27 +11,49 @@ const CustomerController = {
     try {
       const { cName, cNIC, cPhone, cAddress, cImgUrl } = req.body;
 
-      if (!cName || !cNIC || !cPhone) {
-        return next(new AppError("Customer Name, CNIC, and Phone are required.", 400));
+      if (!cName || !cPhone) {
+        return next(new AppError("Customer Name and Phone are required.", 400));
       }
 
-      const existingCustomer = await Customer.findOne({ $or: [{ cNIC }, { cPhone }] });
-      if (existingCustomer) {
-        return next(new AppError("Customer with this NIC or phone number already exists.", 400));
+      // Check Phone uniqueness (always)
+      const existingPhone = await Customer.findOne({ cPhone });
+      if (existingPhone) {
+        return next(new AppError(`Customer with phone number '${cPhone}' already exists.`, 400));
       }
 
-      const customer = new Customer({
-        cName, cNIC, cPhone, cAddress,
+      // Check CNIC uniqueness (if provided)
+      const trimmedCNIC = cNIC ? cNIC.trim() : null;
+      if (trimmedCNIC && trimmedCNIC !== "") {
+        const existingCnic = await Customer.findOne({ cNIC: trimmedCNIC });
+        if (existingCnic) {
+          return next(new AppError(`Customer with CNIC '${trimmedCNIC}' already exists.`, 400));
+        }
+      }
+
+      const customerToSave = {
+        cName,
+        cPhone,
+        cAddress,
         cPaidAmount: 0,
         cOutstandingAmt: 0,
         cOrders: [],
         cImgUrl: cImgUrl || null,
-      });
+      };
+
+      if (trimmedCNIC) { // Only add cNIC to the object if it has a value
+        customerToSave.cNIC = trimmedCNIC;
+      }
+
+      const customer = new Customer(customerToSave);
       await customer.save();
       res.status(201).json({ success: true, message: "Customer created successfully", data: customer });
     } catch (error) {
       if (error.name === 'ValidationError') return next(new AppError(error.message, 400));
-      if (error.code === 11000) return next(new AppError(`Duplicate value for ${Object.keys(error.keyValue)[0]}.`, 400));
+      if (error.code === 11000) {
+        let field = Object.keys(error.keyValue)[0];
+        let value = error.keyValue[field];
+        return next(new AppError(`A customer with this ${field} ('${value}') already exists.`, 400));
+      }
       next(new AppError("Error creating customer: " + error.message, 500));
     }
   },
@@ -70,18 +92,24 @@ const CustomerController = {
       const { cName, cNIC, cPhone, cAddress, cImgUrl } = req.body;
       const updateData = {};
       if (cName) updateData.cName = cName;
-      if (cNIC) updateData.cNIC = cNIC;
+      if (cNIC !== undefined) {
+        updateData.cNIC = (cNIC && cNIC.trim() !== "") ? cNIC.trim() : null;
+      }
       if (cPhone) updateData.cPhone = cPhone;
       if (cAddress) updateData.cAddress = cAddress;
       if (cImgUrl !== undefined) updateData.cImgUrl = cImgUrl;
 
-      if (cNIC || cPhone) {
-        const queryConditions = [];
-        if (cNIC) queryConditions.push({ cNIC });
-        if (cPhone) queryConditions.push({ cPhone });
-        const existingCustomer = await Customer.findOne({ _id: { $ne: req.params.id }, $or: queryConditions });
-        if (existingCustomer) {
-          return next(new AppError("NIC or phone number already used by another customer.", 400));
+
+      if (updateData.cNIC) { // If cNIC is being set to a non-null, non-empty value
+        const existingCnic = await Customer.findOne({ cNIC: updateData.cNIC, _id: { $ne: req.params.id } });
+        if (existingCnic) {
+          return next(new AppError(`CNIC '${updateData.cNIC}' already used by another customer.`, 400));
+        }
+      }
+      if (updateData.cPhone) { // If cPhone is being updated
+        const existingPhone = await Customer.findOne({ cPhone: updateData.cPhone, _id: { $ne: req.params.id } });
+        if (existingPhone) {
+          return next(new AppError(`Phone '${updateData.cPhone}' already used by another customer.`, 400));
         }
       }
 
