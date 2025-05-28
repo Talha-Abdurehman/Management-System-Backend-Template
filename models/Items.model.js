@@ -4,7 +4,7 @@ const { ITEM_PRICE_TYPE } = require('../utils/constants');
 const ItemSchema = new mongoose.Schema(
   {
     product_name: { type: String, required: true, unique: true },
-    product_category: { type: String },
+    product_category: { type: String, required: true },
     product_quantity: { type: Number, required: true, min: 1 },
     retail_price: { type: Number, required: true, min: 0 },
     wholesale_price: { type: Number, min: 0 },
