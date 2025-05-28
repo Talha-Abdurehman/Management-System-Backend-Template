@@ -5,7 +5,11 @@ const mongoose = require('mongoose');
 
 exports.createItem = async (req, res, next) => {
   try {
-    const newItem = new Item(req.body);
+    const itemData = { ...req.body };
+    if (!itemData.product_category || itemData.product_category.trim() === "") {
+      itemData.product_category = "Uncategorized"; // Ensure default if empty string sent
+    }
+    const newItem = new Item(itemData);
     await newItem.save();
     res.status(201).json(newItem);
   } catch (error) {
@@ -65,7 +69,12 @@ exports.updateById = async (req, res, next) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return next(new AppError("Invalid item ID format", 400));
     }
-    const result = await Item.findByIdAndUpdate(id, req.body, {
+    const updateData = { ...req.body };
+    if (updateData.hasOwnProperty('product_category') && (updateData.product_category === null || updateData.product_category.trim() === "")) {
+      updateData.product_category = "Uncategorized";
+    }
+
+    const result = await Item.findByIdAndUpdate(id, updateData, {
       new: true,
       runValidators: true,
     });
@@ -131,9 +140,11 @@ exports.createCategory = async (req, res, next) => {
     if (!name || name.trim() === "") {
       return next(new AppError("Category name is required.", 400));
     }
+    if (name.trim().toLowerCase() === "uncategorized") {
+      return next(new AppError("Cannot create a category named 'Uncategorized' as it is a system-reserved default.", 400));
+    }
 
-    // Case-insensitive check for existing category
-    const existingCategory = await Category.findOne({ name: { $regex: `^${name.trim()}$`, $options: 'i' } });
+    const existingCategory = await Category.findOne({ name: { $regex: `^${name.trim()}`, $options: 'i' } });
     if (existingCategory) {
       return next(new AppError(`Category '${name.trim()}' already exists.`, 400));
     }
@@ -142,7 +153,7 @@ exports.createCategory = async (req, res, next) => {
     await newCategory.save();
     res.status(201).json({ message: "Category created successfully", category: newCategory });
   } catch (error) {
-    if (error.code === 11000) { // Mongoose unique index violation (fallback)
+    if (error.code === 11000) {
       return next(new AppError(`Category '${req.body.name.trim()}' already exists.`, 400));
     }
     if (error.name === 'ValidationError') {
@@ -154,7 +165,7 @@ exports.createCategory = async (req, res, next) => {
 
 exports.getAllCategories = async (req, res, next) => {
   try {
-    const categories = await Category.find().sort({ name: 1 }); // Sort alphabetically by name
+    const categories = await Category.find().sort({ name: 1 });
     const categoryNames = categories.map(cat => cat.name);
     res.json(categoryNames);
   } catch (error) {
@@ -177,33 +188,31 @@ exports.renameCategory = async (req, res, next) => {
     if (trimmedNewName === "") {
       return next(new AppError("New category name cannot be empty.", 400));
     }
+    if (trimmedNewName.toLowerCase() === "uncategorized") {
+      return next(new AppError("Cannot rename a category to 'Uncategorized' as it is a system-reserved default.", 400));
+    }
     if (oldName.trim().toLowerCase() === trimmedNewName.toLowerCase()) {
       return res.json({ message: "Old and new category names are the same. No changes made.", modifiedCount: 0 });
     }
 
-    // Check if the old category name exists in the Category collection
-    const categoryToUpdate = await Category.findOne({ name: { $regex: `^${oldName.trim()}$`, $options: 'i' } });
+    const categoryToUpdate = await Category.findOne({ name: { $regex: `^${oldName.trim()}`, $options: 'i' } });
     if (!categoryToUpdate) {
       return next(new AppError(`Category '${oldName.trim()}' not found.`, 404));
     }
 
-    // Check if the new category name already exists (case-insensitive)
     const newNameExists = await Category.findOne({
-      name: { $regex: `^${trimmedNewName}$`, $options: 'i' },
-      _id: { $ne: categoryToUpdate._id } // Exclude the current category being renamed
+      name: { $regex: `^${trimmedNewName}`, $options: 'i' },
+      _id: { $ne: categoryToUpdate._id }
     });
     if (newNameExists) {
       return next(new AppError(`Category name '${trimmedNewName}' already exists.`, 400));
     }
 
-    // Update category name in Category collection
     categoryToUpdate.name = trimmedNewName;
     await categoryToUpdate.save();
 
-    // Update product_category field in all relevant Items
     const itemUpdateResult = await Item.updateMany(
-      { product_category: oldName }, // Case-sensitive match for updating items might be intended
-      // Or use: { product_category: { $regex: `^${oldName.trim()}$`, $options: 'i' } } for case-insensitive match on items
+      { product_category: { $regex: `^${oldName.trim()}`, $options: 'i' } },
       { $set: { product_category: trimmedNewName } }
     );
 
@@ -217,7 +226,7 @@ exports.renameCategory = async (req, res, next) => {
     if (error.name === 'ValidationError') {
       return next(new AppError(error.message, 400));
     }
-    if (error.code === 11000) { // Mongoose unique index violation on Category collection
+    if (error.code === 11000) {
       return next(new AppError(`Category name '${req.body.newName.trim()}' already exists.`, 400));
     }
     next(new AppError(error.message || "Failed to rename category", 500));
@@ -231,23 +240,21 @@ exports.deleteCategoryByName = async (req, res, next) => {
       return next(new AppError("Category name parameter is required.", 400));
     }
 
-    // Find and delete the category (case-insensitive)
     const categoryToDelete = await Category.findOneAndDelete({
-      name: { $regex: `^${categoryName.trim()}$`, $options: 'i' }
+      name: { $regex: `^${categoryName.trim()}`, $options: 'i' }
     });
 
     if (!categoryToDelete) {
       return next(new AppError(`Category '${categoryName.trim()}' not found.`, 404));
     }
 
-    // Update items that used this category
     const updateResult = await Item.updateMany(
-      { product_category: { $regex: `^${categoryName.trim()}$`, $options: 'i' } }, // Match items with the category name (case-insensitive)
-      { $set: { product_category: "No Category" } }
+      { product_category: { $regex: `^${categoryName.trim()}`, $options: 'i' } },
+      { $set: { product_category: "Uncategorized" } }
     );
 
     res.json({
-      message: `Category '${categoryToDelete.name}' deleted successfully. ${updateResult.modifiedCount} items updated to 'No Category'.`,
+      message: `Category '${categoryToDelete.name}' deleted successfully. ${updateResult.modifiedCount} items updated to 'Uncategorized'.`,
       deletedCategory: categoryToDelete,
       itemsUpdatedCount: updateResult.modifiedCount
     });
@@ -259,27 +266,24 @@ exports.deleteCategoryByName = async (req, res, next) => {
 
 exports.batchDeleteCategories = async (req, res, next) => {
   try {
-    const { names } = req.body; // Expecting an array of category names
+    const { names } = req.body;
 
     if (!names || !Array.isArray(names) || names.length === 0) {
       return next(new AppError("Array of category names is required for batch deletion.", 400));
     }
 
-    // Sanitize names (trimming)
     const trimmedNames = names.map(name => name.trim()).filter(name => name !== "");
     if (trimmedNames.length === 0) {
       return next(new AppError("No valid category names provided after trimming.", 400));
     }
 
-    // Case-insensitive matching for deletion from Category collection
     const categoryDeletionResult = await Category.deleteMany({
-      name: { $in: trimmedNames.map(name => new RegExp(`^${name}$`, 'i')) }
+      name: { $in: trimmedNames.map(name => new RegExp(`^${name}`, 'i')) }
     });
 
-    // Update items that used these categories (case-insensitive match)
     const itemUpdateResult = await Item.updateMany(
-      { product_category: { $in: trimmedNames.map(name => new RegExp(`^${name}$`, 'i')) } },
-      { $set: { product_category: "No Category" } }
+      { product_category: { $in: trimmedNames.map(name => new RegExp(`^${name}`, 'i')) } },
+      { $set: { product_category: "Uncategorized" } }
     );
 
     res.json({
@@ -301,31 +305,22 @@ exports.batchUpdateItemCategory = async (req, res, next) => {
       return next(new AppError("Array of itemIds is required.", 400));
     }
 
-    // Validate ObjectIds
     for (const itemId of itemIds) {
       if (!mongoose.Types.ObjectId.isValid(itemId)) {
         return next(new AppError(`Invalid itemId format: ${itemId}`, 400));
       }
     }
 
-    // If newCategoryName is provided, validate it exists in Category collection (optional, but good practice)
-    // If newCategoryName is null or an empty string, it means unassign category
-    let categoryToSet = newCategoryName;
-    if (newCategoryName && newCategoryName.trim() !== "") {
-      const categoryExists = await Category.findOne({ name: { $regex: `^${newCategoryName.trim()}$`, $options: 'i' } });
+    let categoryToSet;
+    if (newCategoryName && newCategoryName.trim() !== "" && newCategoryName.trim().toLowerCase() !== "uncategorized") {
+      const categoryExists = await Category.findOne({ name: { $regex: `^${newCategoryName.trim()}`, $options: 'i' } });
       if (!categoryExists) {
-        // Option 1: Error out if category doesn't exist
-        // return next(new AppError(`Category '${newCategoryName.trim()}' does not exist. Please create it first.`, 400));
-        // Option 2: Or, allow setting any string, which might create ad-hoc categories if not managed.
-        // For this implementation, we'll assume frontend sends valid categories from its list,
-        // or null/empty to unassign. If a non-existent category name is sent, it will be set as is.
-        // If strict category validation is desired, the check above should be enabled.
+        return next(new AppError(`Category '${newCategoryName.trim()}' does not exist. Please create it first or choose 'Uncategorized'.`, 400));
       }
-      categoryToSet = newCategoryName.trim();
+      categoryToSet = categoryExists.name;
     } else {
-      categoryToSet = null; // Explicitly set to null if newCategoryName is empty or null
+      categoryToSet = "Uncategorized";
     }
-
 
     const updateResult = await Item.updateMany(
       { _id: { $in: itemIds.map(id => new mongoose.Types.ObjectId(id)) } },
@@ -337,7 +332,7 @@ exports.batchUpdateItemCategory = async (req, res, next) => {
     }
 
     res.status(200).json({
-      message: `${updateResult.modifiedCount} item(s) updated to category '${categoryToSet === null ? "None" : categoryToSet}'.`,
+      message: `${updateResult.modifiedCount} item(s) updated to category '${categoryToSet}'.`,
       matchedCount: updateResult.matchedCount,
       modifiedCount: updateResult.modifiedCount,
     });
