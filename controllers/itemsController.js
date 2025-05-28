@@ -292,3 +292,60 @@ exports.batchDeleteCategories = async (req, res, next) => {
     next(new AppError(error.message || "Failed to batch delete categories", 500));
   }
 };
+
+exports.batchUpdateItemCategory = async (req, res, next) => {
+  try {
+    const { itemIds, newCategoryName } = req.body;
+
+    if (!itemIds || !Array.isArray(itemIds) || itemIds.length === 0) {
+      return next(new AppError("Array of itemIds is required.", 400));
+    }
+
+    // Validate ObjectIds
+    for (const itemId of itemIds) {
+      if (!mongoose.Types.ObjectId.isValid(itemId)) {
+        return next(new AppError(`Invalid itemId format: ${itemId}`, 400));
+      }
+    }
+
+    // If newCategoryName is provided, validate it exists in Category collection (optional, but good practice)
+    // If newCategoryName is null or an empty string, it means unassign category
+    let categoryToSet = newCategoryName;
+    if (newCategoryName && newCategoryName.trim() !== "") {
+      const categoryExists = await Category.findOne({ name: { $regex: `^${newCategoryName.trim()}$`, $options: 'i' } });
+      if (!categoryExists) {
+        // Option 1: Error out if category doesn't exist
+        // return next(new AppError(`Category '${newCategoryName.trim()}' does not exist. Please create it first.`, 400));
+        // Option 2: Or, allow setting any string, which might create ad-hoc categories if not managed.
+        // For this implementation, we'll assume frontend sends valid categories from its list,
+        // or null/empty to unassign. If a non-existent category name is sent, it will be set as is.
+        // If strict category validation is desired, the check above should be enabled.
+      }
+      categoryToSet = newCategoryName.trim();
+    } else {
+      categoryToSet = null; // Explicitly set to null if newCategoryName is empty or null
+    }
+
+
+    const updateResult = await Item.updateMany(
+      { _id: { $in: itemIds.map(id => new mongoose.Types.ObjectId(id)) } },
+      { $set: { product_category: categoryToSet } }
+    );
+
+    if (updateResult.matchedCount === 0) {
+      return next(new AppError("No items found matching the provided IDs.", 404));
+    }
+
+    res.status(200).json({
+      message: `${updateResult.modifiedCount} item(s) updated to category '${categoryToSet === null ? "None" : categoryToSet}'.`,
+      matchedCount: updateResult.matchedCount,
+      modifiedCount: updateResult.modifiedCount,
+    });
+
+  } catch (error) {
+    if (error.name === 'CastError' && error.path === '_id') {
+      return next(new AppError("Invalid item ID format in batch update.", 400));
+    }
+    next(new AppError(error.message || "Failed to batch update item categories", 500));
+  }
+};

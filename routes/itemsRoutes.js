@@ -24,7 +24,9 @@ router.get("/categories", itemsController.getAllCategories);
 router.post("/categories", adminMiddleware, itemsController.createCategory);
 router.put("/categories/rename", adminMiddleware, itemsController.renameCategory);
 router.delete("/categories/:name", adminMiddleware, itemsController.deleteCategoryByName);
-router.post("/categories/batch-delete", adminMiddleware, itemsController.batchDeleteCategories); // New route for batch deleting categories
+router.post("/categories/batch-delete", adminMiddleware, itemsController.batchDeleteCategories);
 
+// Route for batch updating item categories
+router.post("/items/batch-update-category", adminMiddleware, itemsController.batchUpdateItemCategory);
 
 module.exports = router;
