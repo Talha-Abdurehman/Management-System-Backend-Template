@@ -184,26 +184,31 @@ exports.renameCategory = async (req, res, next) => {
       return next(new AppError("Category names must be strings.", 400));
     }
 
+    const trimmedOldName = oldName.trim();
     const trimmedNewName = newName.trim();
+
     if (trimmedNewName === "") {
       return next(new AppError("New category name cannot be empty.", 400));
     }
     if (trimmedNewName.toLowerCase() === "uncategorized") {
       return next(new AppError("Cannot rename a category to 'Uncategorized' as it is a system-reserved default.", 400));
     }
-    if (oldName.trim().toLowerCase() === trimmedNewName.toLowerCase()) {
+    if (trimmedOldName.toLowerCase() === trimmedNewName.toLowerCase()) {
       return res.json({ message: "Old and new category names are the same. No changes made.", modifiedCount: 0 });
     }
 
-    const categoryToUpdate = await Category.findOne({ name: { $regex: `^${oldName.trim()}`, $options: 'i' } });
+    const escapeRegex = (string) => string.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+
+    const findOldNameFilter = { name: { $regex: `^${escapeRegex(trimmedOldName)}$`, $options: 'i' } };
+    const categoryToUpdate = await Category.findOne(findOldNameFilter);
+
     if (!categoryToUpdate) {
-      return next(new AppError(`Category '${oldName.trim()}' not found.`, 404));
+      return next(new AppError(`Category '${trimmedOldName}' not found.`, 404));
     }
 
-    const newNameExists = await Category.findOne({
-      name: { $regex: `^${trimmedNewName}`, $options: 'i' },
-      _id: { $ne: categoryToUpdate._id }
-    });
+    const findNewNameFilter = { name: { $regex: `^${escapeRegex(trimmedNewName)}$`, $options: 'i' }, _id: { $ne: categoryToUpdate._id } };
+    const newNameExists = await Category.findOne(findNewNameFilter);
+
     if (newNameExists) {
       return next(new AppError(`Category name '${trimmedNewName}' already exists.`, 400));
     }
@@ -211,13 +216,12 @@ exports.renameCategory = async (req, res, next) => {
     categoryToUpdate.name = trimmedNewName;
     await categoryToUpdate.save();
 
-    const itemUpdateResult = await Item.updateMany(
-      { product_category: { $regex: `^${oldName.trim()}`, $options: 'i' } },
-      { $set: { product_category: trimmedNewName } }
-    );
+    const itemUpdateFilter = { product_category: { $regex: `^${escapeRegex(trimmedOldName)}$`, $options: 'i' } };
+    const itemUpdatePayload = { $set: { product_category: trimmedNewName } };
+    const itemUpdateResult = await Item.updateMany(itemUpdateFilter, itemUpdatePayload);
 
     res.json({
-      message: `Category '${oldName.trim()}' successfully renamed to '${trimmedNewName}'. Updated ${itemUpdateResult.modifiedCount} items.`,
+      message: `Category '${trimmedOldName}' successfully renamed to '${trimmedNewName}'. Updated ${itemUpdateResult.modifiedCount} items.`,
       modifiedItemCount: itemUpdateResult.modifiedCount,
       updatedCategory: categoryToUpdate
     });
@@ -227,7 +231,7 @@ exports.renameCategory = async (req, res, next) => {
       return next(new AppError(error.message, 400));
     }
     if (error.code === 11000) {
-      return next(new AppError(`Category name '${req.body.newName.trim()}' already exists.`, 400));
+      return next(new AppError(`Category name '${req.body.newName.trim()}' already results in a duplicate.`, 400));
     }
     next(new AppError(error.message || "Failed to rename category", 500));
   }
@@ -235,26 +239,36 @@ exports.renameCategory = async (req, res, next) => {
 
 exports.deleteCategoryByName = async (req, res, next) => {
   try {
-    const categoryName = req.params.name;
-    if (!categoryName || categoryName.trim() === "") {
+    const categoryNameParam = req.params.name;
+
+    if (!categoryNameParam || categoryNameParam.trim() === "") {
       return next(new AppError("Category name parameter is required.", 400));
     }
 
-    const categoryToDelete = await Category.findOneAndDelete({
-      name: { $regex: `^${categoryName.trim()}`, $options: 'i' }
-    });
+    const escapeRegex = (string) => string.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+
+    const trimmedCategoryName = categoryNameParam.trim();
+    const safeRegexCategoryName = escapeRegex(trimmedCategoryName);
+
+    const deleteFilter = { name: { $regex: `^${safeRegexCategoryName}$`, $options: 'i' } };
+
+    const categoryToDelete = await Category.findOneAndDelete(deleteFilter);
 
     if (!categoryToDelete) {
-      return next(new AppError(`Category '${categoryName.trim()}' not found.`, 404));
+      return next(new AppError(`Category '${trimmedCategoryName}' not found.`, 404));
     }
 
+    const actualDeletedCategoryName = categoryToDelete.name;
+    const safeActualDeletedCategoryNameRegex = escapeRegex(actualDeletedCategoryName);
+    const itemUpdateFilter = { product_category: { $regex: `^${safeActualDeletedCategoryNameRegex}$`, $options: 'i' } };
+
     const updateResult = await Item.updateMany(
-      { product_category: { $regex: `^${categoryName.trim()}`, $options: 'i' } },
+      itemUpdateFilter,
       { $set: { product_category: "Uncategorized" } }
     );
 
     res.json({
-      message: `Category '${categoryToDelete.name}' deleted successfully. ${updateResult.modifiedCount} items updated to 'Uncategorized'.`,
+      message: `Category '${actualDeletedCategoryName}' deleted successfully. ${updateResult.modifiedCount} items updated to 'Uncategorized'.`,
       deletedCategory: categoryToDelete,
       itemsUpdatedCount: updateResult.modifiedCount
     });
@@ -298,46 +312,60 @@ exports.batchDeleteCategories = async (req, res, next) => {
 };
 
 exports.batchUpdateItemCategory = async (req, res, next) => {
+  console.log("[ItemsController] Batch Update Category: Received request with body:", req.body);
   try {
     const { itemIds, newCategoryName } = req.body;
 
     if (!itemIds || !Array.isArray(itemIds) || itemIds.length === 0) {
+      console.log("[ItemsController] Batch Update Category: Validation Error - itemIds array is required and cannot be empty.");
       return next(new AppError("Array of itemIds is required.", 400));
     }
 
     for (const itemId of itemIds) {
       if (!mongoose.Types.ObjectId.isValid(itemId)) {
+        console.log(`[ItemsController] Batch Update Category: Validation Error - Invalid itemId format: ${itemId}`);
         return next(new AppError(`Invalid itemId format: ${itemId}`, 400));
       }
     }
+    console.log("[ItemsController] Batch Update Category: Item IDs validated:", itemIds);
 
     let categoryToSet;
     if (newCategoryName && newCategoryName.trim() !== "" && newCategoryName.trim().toLowerCase() !== "uncategorized") {
+      console.log(`[ItemsController] Batch Update Category: Attempting to set new category to '${newCategoryName.trim()}'`);
       const categoryExists = await Category.findOne({ name: { $regex: `^${newCategoryName.trim()}`, $options: 'i' } });
       if (!categoryExists) {
+        console.log(`[ItemsController] Batch Update Category: Validation Error - Category '${newCategoryName.trim()}' does not exist.`);
         return next(new AppError(`Category '${newCategoryName.trim()}' does not exist. Please create it first or choose 'Uncategorized'.`, 400));
       }
-      categoryToSet = categoryExists.name;
+      categoryToSet = categoryExists.name; // Use the exact name from DB to maintain case consistency
+      console.log(`[ItemsController] Batch Update Category: Category '${categoryToSet}' found and will be used.`);
     } else {
       categoryToSet = "Uncategorized";
+      console.log("[ItemsController] Batch Update Category: Setting category to 'Uncategorized'.");
     }
 
     const updateResult = await Item.updateMany(
       { _id: { $in: itemIds.map(id => new mongoose.Types.ObjectId(id)) } },
       { $set: { product_category: categoryToSet } }
     );
+    console.log("[ItemsController] Batch Update Category: Item.updateMany result:", updateResult);
 
-    if (updateResult.matchedCount === 0) {
-      return next(new AppError("No items found matching the provided IDs.", 404));
+
+    if (updateResult.matchedCount === 0 && itemIds.length > 0) { // Check if itemIds was not empty
+      console.log("[ItemsController] Batch Update Category: No items found matching the provided IDs for update.");
+      // It's not necessarily an error if no items matched, but could be an indication of a problem.
+      // For now, we will proceed to send a success response, but indicate 0 modified.
     }
 
+
     res.status(200).json({
-      message: `${updateResult.modifiedCount} item(s) updated to category '${categoryToSet}'.`,
+      message: `${updateResult.modifiedCount} item(s) updated to category '${categoryToSet}'. Matched ${updateResult.matchedCount} items.`,
       matchedCount: updateResult.matchedCount,
       modifiedCount: updateResult.modifiedCount,
     });
 
   } catch (error) {
+    console.error("[ItemsController] Batch Update Category: Error caught:", error);
     if (error.name === 'CastError' && error.path === '_id') {
       return next(new AppError("Invalid item ID format in batch update.", 400));
     }
