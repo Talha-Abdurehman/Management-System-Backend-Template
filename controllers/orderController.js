@@ -113,32 +113,37 @@ exports.createOrder = async (req, res, next) => {
     }
 
     const newOrderData = { ...req.body };
-    // Ensure customer field is set correctly, even if it was null/undefined initially in req.body
-    // but then a customer was created and ID obtained by frontend (as in OrderCompositionPod flow)
+
+    // Handle walk-in customer details vs registered customer
     if (customerId) {
       newOrderData.customer = customerId;
+      // Ensure walk-in fields are not set if a registered customer is provided
+      delete newOrderData.walkInCustomerName;
+      delete newOrderData.walkInCustomerCNIC;
+      delete newOrderData.walkInCustomerPhone;
     } else {
-      delete newOrderData.customer; // Ensure it's not present if no customerId
+      // No registered customer ID, so check for walk-in details
+      newOrderData.walkInCustomerName = req.body.walkInCustomerName || null;
+      newOrderData.walkInCustomerCNIC = req.body.walkInCustomerCNIC || null;
+      newOrderData.walkInCustomerPhone = req.body.walkInCustomerPhone || null;
+      delete newOrderData.customer; // Ensure customer ref is not set
     }
 
 
     const newOrder = new Orders(newOrderData);
     await newOrder.save({ session });
 
-    // If a customer is associated with this order, update the customer's cOrders and recalculate balance
+    // If a registered customer is associated with this order, update their cOrders and recalculate balance
     if (newOrder.customer) {
       const CustomerModel = mongoose.model("Customers");
       const customer = await CustomerModel.findById(newOrder.customer).session(session);
       if (customer) {
         if (!customer.cOrders.map(id => id.toString()).includes(newOrder._id.toString())) {
           customer.cOrders.push(newOrder._id);
-          // No explicit customer.save() here, as recalculateBalances will save it.
         }
-        // Explicitly recalculate customer balance AFTER order is known and its ID is in customer.cOrders (in memory for this instance).
-        // The recalculateBalances method handles saving the customer.
         await customer.recalculateBalances({ session });
       } else {
-        console.warn(`[OrderController.createOrder] Customer with ID ${newOrder.customer} not found when trying to link order ${newOrder._id}. Order saved without explicit customer link update balance recalculation here.`);
+        console.warn(`[OrderController.createOrder] Registered Customer with ID ${newOrder.customer} not found when trying to link order ${newOrder._id}.`);
       }
     }
 
@@ -147,40 +152,21 @@ exports.createOrder = async (req, res, next) => {
     const profitForThisOrder = newOrder.total_price;
     const ordersInThisTransaction = 1;
 
-    // Asynchronously update business history; do not await.
-    // This allows the order creation to respond faster.
-    // Business history updates are eventually consistent.
     attemptBusinessHistoryUpdate(orderDateForHistory, profitForThisOrder, ordersInThisTransaction)
       .catch(historyUpdateError => {
-        // Log errors from the background task, but don't let it block the main flow.
         console.error(`BACKGROUND_ERROR: Business history update failed for order ${newOrder._id}: ${historyUpdateError.message}`);
       });
 
     await session.commitTransaction();
-    // Populate customer details if they were part of the request and are needed in the response
-    let finalOrderResponse = newOrder.toObject();
-    if (newOrder.customer && typeof newOrder.customer !== 'string') { // if populated
-      // no action needed, already populated by Mongoose if schema is set up for it
-    } else if (newOrder.customer) { // if it's an ID, try to populate
-      try {
-        const populatedOrder = await Orders.findById(newOrder._id).populate('customer', 'cName cNIC').session(session);
-        if (populatedOrder) finalOrderResponse = populatedOrder.toObject();
-      } catch (popErr) {
-        console.error(`[OrderController.createOrder] Error populating customer for response: ${popErr.message}`);
-      }
-    }
 
-    // Populate for the response, including item details
     let populatedOrderForResponse = await Orders.findById(newOrder._id)
-      .populate('customer', 'cName cNIC')
-      .populate('order_items.item', 'product_name retail_price wholesale_price product_category') // Ensure product_category is populated
-      .session(session); // Or without .session(session) if transaction is committed and closed.
-    // If session is active, using it is safer.
+      .populate('customer', 'cName cNIC') // Populate registered customer if exists
+      .populate('order_items.item', 'product_name retail_price wholesale_price product_category')
+      .lean(); // Using lean for potentially faster response, toObject() manually if needed later
+    // No specific session needed here for findById after commit, but can be added if issues arise.
 
-    finalOrderResponse = populatedOrderForResponse ? populatedOrderForResponse.toObject() : newOrder.toObject();
+    res.status(201).json({ Message: "Created Successfully", order: populatedOrderForResponse });
 
-
-    res.status(201).json({ Message: "Created Successfully", order: finalOrderResponse });
   } catch (err) {
     await session.abortTransaction();
     if (err.code === 11000 && err.keyPattern && err.keyPattern.invoice_id) {
