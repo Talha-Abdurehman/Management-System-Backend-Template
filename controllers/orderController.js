@@ -198,12 +198,40 @@ exports.createOrder = async (req, res, next) => {
 
 exports.getOrder = async (req, res, next) => {
   try {
-    const data = await Orders.find().populate('customer', 'cName cNIC').populate('order_items.item', 'product_name retail_price wholesale_price').sort({ createdAt: -1 });
+    const { startDate, endDate } = req.query;
+    let queryFilter = {};
+
+    if (startDate) {
+      const startOfDay = new Date(startDate);
+      startOfDay.setUTCHours(0, 0, 0, 0); // Start of the day in UTC
+
+      if (endDate && startDate === endDate) { // Single day filter
+        const endOfDay = new Date(startDate); // Use startDate for end of the same day
+        endOfDay.setUTCHours(23, 59, 59, 999); // End of the day in UTC
+        queryFilter.createdAt = { $gte: startOfDay, $lte: endOfDay };
+      } else if (endDate) { // Date range filter
+        const endOfDay = new Date(endDate);
+        endOfDay.setUTCHours(23, 59, 59, 999); // End of the day in UTC
+        queryFilter.createdAt = { $gte: startOfDay, $lte: endOfDay };
+      } else { // Only startDate provided (treat as single day)
+        const endOfDay = new Date(startDate);
+        endOfDay.setUTCHours(23, 59, 59, 999); // End of the day in UTC
+        queryFilter.createdAt = { $gte: startOfDay, $lte: endOfDay };
+      }
+    }
+
+
+    const data = await Orders.find(queryFilter)
+      .populate('customer', 'cName cNIC')
+      .populate('order_items.item', 'product_name retail_price wholesale_price product_category')
+      .sort({ createdAt: -1 });
+
     if (!data || data.length === 0) {
-      return res.json([]); // Return empty array if no orders found
+      return res.json([]);
     }
     res.json(data);
   } catch (err) {
+    console.error("Error in getOrder:", err);
     next(new AppError(`Error Fetching Orders: ${err.message}`, 500));
   }
 };
