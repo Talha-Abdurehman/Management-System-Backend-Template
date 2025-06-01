@@ -40,12 +40,55 @@ function _updateNestedHistoryData(existingRecord, newData) {
 
 exports.fetchHistory = async (req, res, next) => {
   try {
-    const data = await BusinessHistory.find().sort({ year: -1 });
-    if (!data || data.length === 0) {
-      // Return empty array for consistency, not a 404 for a list.
+    const { startDate, endDate } = req.query;
+    let query = {};
+    let dateFilterActive = false;
+
+    let sDate, eDate;
+
+    if (startDate) {
+      dateFilterActive = true;
+      sDate = new Date(startDate);
+      sDate.setUTCHours(0, 0, 0, 0);
+
+      // If only startDate is provided, or if startDate and endDate are the same, filter for that single day.
+      // Otherwise, use the endDate for the range.
+      eDate = (endDate && startDate !== endDate) ? new Date(endDate) : new Date(startDate);
+      eDate.setUTCHours(23, 59, 59, 999);
+
+      const startYear = sDate.getFullYear();
+      const endYear = eDate.getFullYear();
+      query.year = { $gte: startYear, $lte: endYear };
+    }
+
+    let records = await BusinessHistory.find(query).sort({ year: -1 }).lean();
+
+    if (dateFilterActive && records.length > 0) {
+      records = records.map(yearRecord => {
+        const filteredMonths = yearRecord.months
+          .filter(monthData => {
+            const monthStartUTC = Date.UTC(yearRecord.year, monthData.month - 1, 1);
+            // Last day of month: day 0 of next month
+            const monthEndUTC = Date.UTC(yearRecord.year, monthData.month, 0, 23, 59, 59, 999);
+
+            return monthStartUTC <= eDate.getTime() && monthEndUTC >= sDate.getTime();
+          })
+          .map(monthData => {
+            const filteredDays = monthData.days.filter(dayData => {
+              const currentDayUTC = Date.UTC(yearRecord.year, monthData.month - 1, dayData.day);
+              return currentDayUTC >= sDate.getTime() && currentDayUTC <= eDate.getTime();
+            });
+            return { ...monthData, days: filteredDays.filter(d => d.totalOrders > 0 || d.totalProfit > 0) }; // Only keep days with data
+          });
+        return { ...yearRecord, months: filteredMonths.filter(m => m.days.length > 0) };
+      });
+      records = records.filter(y => y.months.length > 0);
+    }
+
+    if (!records || records.length === 0) {
       return res.json([]);
     }
-    res.json(data);
+    res.json(records);
   } catch (e) {
     next(new AppError(e.message || "Error fetching history", 500));
   }
