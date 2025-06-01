@@ -3,11 +3,14 @@ const Category = require("../models/Category.model");
 const AppError = require('../utils/AppError');
 const mongoose = require('mongoose');
 
+// Helper function to escape special characters for regex
+const escapeRegex = (string) => string.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+
 exports.createItem = async (req, res, next) => {
   try {
     const itemData = { ...req.body };
     if (!itemData.product_category || itemData.product_category.trim() === "") {
-      itemData.product_category = "Uncategorized"; // Ensure default if empty string sent
+      itemData.product_category = "Uncategorized";
     }
     const newItem = new Item(itemData);
     await newItem.save();
@@ -140,20 +143,25 @@ exports.createCategory = async (req, res, next) => {
     if (!name || name.trim() === "") {
       return next(new AppError("Category name is required.", 400));
     }
-    if (name.trim().toLowerCase() === "uncategorized") {
+    const trimmedName = name.trim();
+    if (trimmedName.toLowerCase() === "uncategorized") {
       return next(new AppError("Cannot create a category named 'Uncategorized' as it is a system-reserved default.", 400));
     }
 
-    const existingCategory = await Category.findOne({ name: { $regex: `^${name.trim()}`, $options: 'i' } });
+    // Use exact match for checking existence, case-insensitive via regex
+    const escapedTrimmedName = escapeRegex(trimmedName);
+    const existingCategory = await Category.findOne({ name: { $regex: `^${escapedTrimmedName}$`, $options: 'i' } });
+
     if (existingCategory) {
-      return next(new AppError(`Category '${name.trim()}' already exists.`, 400));
+      return next(new AppError(`Category '${trimmedName}' already exists.`, 400));
     }
 
-    const newCategory = new Category({ name: name.trim() });
+    const newCategory = new Category({ name: trimmedName });
     await newCategory.save();
     res.status(201).json({ message: "Category created successfully", category: newCategory });
   } catch (error) {
-    if (error.code === 11000) {
+    // Mongoose unique index error on 'name' (if schema enforces it separately)
+    if (error.code === 11000 && error.keyPattern && error.keyPattern.name) {
       return next(new AppError(`Category '${req.body.name.trim()}' already exists.`, 400));
     }
     if (error.name === 'ValidationError') {
@@ -197,16 +205,14 @@ exports.renameCategory = async (req, res, next) => {
       return res.json({ message: "Old and new category names are the same. No changes made.", modifiedCount: 0 });
     }
 
-    const escapeRegex = (string) => string.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-
-    const findOldNameFilter = { name: { $regex: `^${escapeRegex(trimmedOldName)}$`, $options: 'i' } };
+    const findOldNameFilter = { name: { $regex: `^${escapeRegex(trimmedOldName)}$`, $options: 'i' } }; // Exact match
     const categoryToUpdate = await Category.findOne(findOldNameFilter);
 
     if (!categoryToUpdate) {
       return next(new AppError(`Category '${trimmedOldName}' not found.`, 404));
     }
 
-    const findNewNameFilter = { name: { $regex: `^${escapeRegex(trimmedNewName)}$`, $options: 'i' }, _id: { $ne: categoryToUpdate._id } };
+    const findNewNameFilter = { name: { $regex: `^${escapeRegex(trimmedNewName)}$`, $options: 'i' }, _id: { $ne: categoryToUpdate._id } }; // Exact match
     const newNameExists = await Category.findOne(findNewNameFilter);
 
     if (newNameExists) {
@@ -216,7 +222,7 @@ exports.renameCategory = async (req, res, next) => {
     categoryToUpdate.name = trimmedNewName;
     await categoryToUpdate.save();
 
-    const itemUpdateFilter = { product_category: { $regex: `^${escapeRegex(trimmedOldName)}$`, $options: 'i' } };
+    const itemUpdateFilter = { product_category: { $regex: `^${escapeRegex(trimmedOldName)}$`, $options: 'i' } }; // Match items with old category name (case-insensitive exact)
     const itemUpdatePayload = { $set: { product_category: trimmedNewName } };
     const itemUpdateResult = await Item.updateMany(itemUpdateFilter, itemUpdatePayload);
 
@@ -230,8 +236,8 @@ exports.renameCategory = async (req, res, next) => {
     if (error.name === 'ValidationError') {
       return next(new AppError(error.message, 400));
     }
-    if (error.code === 11000) {
-      return next(new AppError(`Category name '${req.body.newName.trim()}' already results in a duplicate.`, 400));
+    if (error.code === 11000) { // Mongoose unique index error
+      return next(new AppError(`Category name '${req.body.newName.trim()}' already exists.`, 400));
     }
     next(new AppError(error.message || "Failed to rename category", 500));
   }
@@ -245,22 +251,20 @@ exports.deleteCategoryByName = async (req, res, next) => {
       return next(new AppError("Category name parameter is required.", 400));
     }
 
-    const escapeRegex = (string) => string.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-
     const trimmedCategoryName = categoryNameParam.trim();
     const safeRegexCategoryName = escapeRegex(trimmedCategoryName);
 
+    // Find the exact category to delete (case-insensitive)
     const deleteFilter = { name: { $regex: `^${safeRegexCategoryName}$`, $options: 'i' } };
-
     const categoryToDelete = await Category.findOneAndDelete(deleteFilter);
 
     if (!categoryToDelete) {
       return next(new AppError(`Category '${trimmedCategoryName}' not found.`, 404));
     }
 
+    // Use the actual name from the deleted category for updating items to handle case differences
     const actualDeletedCategoryName = categoryToDelete.name;
-    const safeActualDeletedCategoryNameRegex = escapeRegex(actualDeletedCategoryName);
-    const itemUpdateFilter = { product_category: { $regex: `^${safeActualDeletedCategoryNameRegex}$`, $options: 'i' } };
+    const itemUpdateFilter = { product_category: { $regex: `^${escapeRegex(actualDeletedCategoryName)}$`, $options: 'i' } };
 
     const updateResult = await Item.updateMany(
       itemUpdateFilter,
@@ -291,12 +295,14 @@ exports.batchDeleteCategories = async (req, res, next) => {
       return next(new AppError("No valid category names provided after trimming.", 400));
     }
 
+    const escapedTrimmedNames = trimmedNames.map(escapeRegex);
+
     const categoryDeletionResult = await Category.deleteMany({
-      name: { $in: trimmedNames.map(name => new RegExp(`^${name}`, 'i')) }
+      name: { $in: escapedTrimmedNames.map(name => new RegExp(`^${name}$`, 'i')) } // Exact match for each name
     });
 
     const itemUpdateResult = await Item.updateMany(
-      { product_category: { $in: trimmedNames.map(name => new RegExp(`^${name}`, 'i')) } },
+      { product_category: { $in: escapedTrimmedNames.map(name => new RegExp(`^${name}$`, 'i')) } }, // Exact match for each name
       { $set: { product_category: "Uncategorized" } }
     );
 
@@ -331,13 +337,17 @@ exports.batchUpdateItemCategory = async (req, res, next) => {
 
     let categoryToSet;
     if (newCategoryName && newCategoryName.trim() !== "" && newCategoryName.trim().toLowerCase() !== "uncategorized") {
-      console.log(`[ItemsController] Batch Update Category: Attempting to set new category to '${newCategoryName.trim()}'`);
-      const categoryExists = await Category.findOne({ name: { $regex: `^${newCategoryName.trim()}`, $options: 'i' } });
+      const trimmedNewCategoryName = newCategoryName.trim();
+      console.log(`[ItemsController] Batch Update Category: Attempting to set new category to '${trimmedNewCategoryName}'`);
+
+      const escapedCategoryName = escapeRegex(trimmedNewCategoryName);
+      const categoryExists = await Category.findOne({ name: { $regex: `^${escapedCategoryName}$`, $options: 'i' } }); // Exact, case-insensitive match
+
       if (!categoryExists) {
-        console.log(`[ItemsController] Batch Update Category: Validation Error - Category '${newCategoryName.trim()}' does not exist.`);
-        return next(new AppError(`Category '${newCategoryName.trim()}' does not exist. Please create it first or choose 'Uncategorized'.`, 400));
+        console.log(`[ItemsController] Batch Update Category: Validation Error - Category '${trimmedNewCategoryName}' does not exist.`);
+        return next(new AppError(`Category '${trimmedNewCategoryName}' does not exist. Please create it first or choose 'Uncategorized'.`, 400));
       }
-      categoryToSet = categoryExists.name; // Use the exact name from DB to maintain case consistency
+      categoryToSet = categoryExists.name;
       console.log(`[ItemsController] Batch Update Category: Category '${categoryToSet}' found and will be used.`);
     } else {
       categoryToSet = "Uncategorized";
@@ -350,13 +360,9 @@ exports.batchUpdateItemCategory = async (req, res, next) => {
     );
     console.log("[ItemsController] Batch Update Category: Item.updateMany result:", updateResult);
 
-
-    if (updateResult.matchedCount === 0 && itemIds.length > 0) { // Check if itemIds was not empty
+    if (updateResult.matchedCount === 0 && itemIds.length > 0) {
       console.log("[ItemsController] Batch Update Category: No items found matching the provided IDs for update.");
-      // It's not necessarily an error if no items matched, but could be an indication of a problem.
-      // For now, we will proceed to send a success response, but indicate 0 modified.
     }
-
 
     res.status(200).json({
       message: `${updateResult.modifiedCount} item(s) updated to category '${categoryToSet}'. Matched ${updateResult.matchedCount} items.`,
