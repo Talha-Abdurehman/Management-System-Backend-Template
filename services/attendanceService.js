@@ -24,7 +24,7 @@ exports.addAttendanceRecord = async (Model, entityId, attendanceData) => {
     }
 
     const attendanceDate = new Date(date);
-    attendanceDate.setUTCHours(0, 0, 0, 0);
+    attendanceDate.setUTCHours(0, 0, 0, 0); // Normalize to start of UTC day
 
     const existingAttendance = entity.attendance.find(
         (att) => att.date.getTime() === attendanceDate.getTime()
@@ -42,31 +42,17 @@ exports.addAttendanceRecord = async (Model, entityId, attendanceData) => {
     return entity;
 };
 
-/**
- * Gets all attendance records for a given entity.
- * @param {mongoose.Model} Model - The Mongoose model (User or Employee).
- * @param {String} entityId - The ID of the user or employee.
- * @returns {Promise<Array>} Array of attendance records.
- */
 exports.getAttendanceRecords = async (Model, entityId) => {
     if (!mongoose.Types.ObjectId.isValid(entityId)) {
         throw new AppError(`Invalid ${Model.modelName} ID format`, 400);
     }
-    const entity = await Model.findById(entityId).select("username name attendance isAdmin"); // Select fields relevant to both
+    const entity = await Model.findById(entityId).select("username name attendance isAdmin");
     if (!entity) {
         throw new AppError(`${Model.modelName} not found`, 404);
     }
     return entity.attendance;
 };
 
-/**
- * Updates an existing attendance record for a given entity.
- * @param {mongoose.Model} Model - The Mongoose model (User or Employee).
- * @param {String} entityId - The ID of the user or employee.
- * @param {String} dateString - The date of the attendance record (YYYY-MM-DD).
- * @param {Object} updateData - Object containing status and/or payment to update.
- * @returns {Promise<Object>} The updated entity document.
- */
 exports.updateAttendanceRecord = async (Model, entityId, dateString, updateData) => {
     const { status, payment } = updateData;
 
@@ -78,7 +64,7 @@ exports.updateAttendanceRecord = async (Model, entityId, dateString, updateData)
     if (isNaN(attendanceDate.getTime())) {
         throw new AppError("Invalid date format. Use YYYY-MM-DD.", 400);
     }
-    attendanceDate.setUTCHours(0, 0, 0, 0);
+    attendanceDate.setUTCHours(0, 0, 0, 0); // Normalize to start of UTC day for comparison
 
     const entity = await Model.findById(entityId);
     if (!entity) {
@@ -94,19 +80,12 @@ exports.updateAttendanceRecord = async (Model, entityId, dateString, updateData)
     }
 
     if (status) entity.attendance[attendanceIndex].status = status;
-    if (payment !== undefined) entity.attendance[attendanceIndex].payment = payment; // Allow updating payment to any valid enum
+    if (payment !== undefined) entity.attendance[attendanceIndex].payment = payment;
 
     await entity.save();
     return entity;
 };
 
-/**
- * Deletes an attendance record for a given entity.
- * @param {mongoose.Model} Model - The Mongoose model (User or Employee).
- * @param {String} entityId - The ID of the user or employee.
- * @param {String} dateString - The date of the attendance record (YYYY-MM-DD).
- * @returns {Promise<Object>} The updated entity document.
- */
 exports.deleteAttendanceRecord = async (Model, entityId, dateString) => {
     if (!mongoose.Types.ObjectId.isValid(entityId)) {
         throw new AppError(`Invalid ${Model.modelName} ID format`, 400);
@@ -116,7 +95,7 @@ exports.deleteAttendanceRecord = async (Model, entityId, dateString) => {
     if (isNaN(attendanceDate.getTime())) {
         throw new AppError("Invalid date format. Use YYYY-MM-DD.", 400);
     }
-    attendanceDate.setUTCHours(0, 0, 0, 0);
+    attendanceDate.setUTCHours(0, 0, 0, 0); // Normalize to start of UTC day for comparison
 
     const entity = await Model.findById(entityId);
     if (!entity) {

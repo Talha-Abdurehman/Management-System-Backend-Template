@@ -20,36 +20,31 @@ async function attemptBusinessHistoryUpdate(
   const RETRY_DELAY_MS = 1000 * Math.pow(2, attempt - 1);
 
   try {
-    const year = orderDate.getFullYear();
-    const month = orderDate.getMonth() + 1;
-    const day = orderDate.getDate();
+    const year = orderDate.getUTCFullYear();
+    const month = orderDate.getUTCMonth() + 1;
+    const day = orderDate.getUTCDate();
 
     let historyRecord = await BusinessHistory.findOne({ year: year });
 
     if (!historyRecord) {
-      // Create new year, month, and day
       historyRecord = new BusinessHistory({
         year: year,
         months: [{ month: month, days: [{ day: day, totalProfit: profitForThisOrder, totalOrders: ordersInThisTransaction }] }],
       });
-      // Sort is not needed here as it's the first entry
       await historyRecord.save();
     } else {
       let monthRecord = historyRecord.months.find((m) => m.month === month);
       if (!monthRecord) {
-        // Year exists, but month does not. Add new month and day.
         historyRecord.months.push({ month: month, days: [{ day: day, totalProfit: profitForThisOrder, totalOrders: ordersInThisTransaction }] });
-        historyRecord.months.sort((a, b) => a.month - b.month); // Sort months
+        historyRecord.months.sort((a, b) => a.month - b.month);
         await historyRecord.save();
       } else {
         let dayRecord = monthRecord.days.find((d) => d.day === day);
         if (!dayRecord) {
-          // Year and month exist, but day does not. Add new day.
           monthRecord.days.push({ day: day, totalProfit: profitForThisOrder, totalOrders: ordersInThisTransaction });
-          monthRecord.days.sort((a, b) => a.day - b.day); // Sort days
+          monthRecord.days.sort((a, b) => a.day - b.day);
           await historyRecord.save();
         } else {
-          // Year, month, and day exist. Atomically update the day's totals.
           const updateResult = await BusinessHistory.updateOne(
             { year: year, "months.month": month, "months.days.day": day },
             {
@@ -62,9 +57,6 @@ async function attemptBusinessHistoryUpdate(
           );
 
           if (updateResult.matchedCount === 0 || updateResult.modifiedCount === 0) {
-            // This fallback is a safeguard but indicates a potential race condition or unexpected state.
-            // In a high-concurrency system, a more robust distributed lock or transactional approach
-            // for the entire find-or-create-and-update logic might be needed for BusinessHistory.
             console.warn(`Atomic $inc for BusinessHistory ${year}-${month}-${day} did not modify. Re-fetching and trying manual save.`);
             const fallbackRecord = await BusinessHistory.findOne({ year: year });
             const fbMonth = fallbackRecord.months.find(m => m.month === month);
