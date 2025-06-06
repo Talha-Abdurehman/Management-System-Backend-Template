@@ -13,6 +13,8 @@ router.put("/orders/:id", orderController.updateOrderById);
 
 router.delete("/orders/:id", orderController.deleteOrderById);
 
+router.delete("/orders", orderController.deleteOrders);
+
 // New route for adding payment to a specific order
 router.post("/orders/:orderId/payment", orderController.addPaymentToOrder);
 
