@@ -7,6 +7,8 @@ router.post("/orders", orderController.createOrder);
 
 router.get("/orders", orderController.getOrder);
 
+router.get("/orders/archived", orderController.getArchivedOrders);
+
 router.get("/orders/:id", orderController.getOrderById);
 
 router.put("/orders/:id", orderController.updateOrderById);

@@ -373,3 +373,20 @@ exports.deleteOrders = async (req, res, next) => {
     session.endSession();
   }
 };
+
+exports.getArchivedOrders = async (req, res, next) => {
+  try {
+    const data = await Orders.find({ isArchived: true })
+      .populate('customer', 'cName cNIC')
+      .populate('order_items.item', 'product_name retail_price wholesale_price product_category')
+      .sort({ createdAt: -1 });
+
+    if (!data || data.length === 0) {
+      return res.json([]);
+    }
+    res.json(data);
+  } catch (err) {
+    console.error("Error in getArchivedOrders:", err);
+    next(new AppError(`Error Fetching Archived Orders: ${err.message}`, 500));
+  }
+};
