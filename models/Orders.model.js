@@ -83,6 +83,8 @@ const OrdersSchema = new mongoose.Schema(
     walkInCustomerName: { type: String, required: false },
     walkInCustomerCNIC: { type: String, required: false },
     walkInCustomerPhone: { type: String, required: false },
+
+    isArchived: { type: Boolean, default: false, index: true },
   },
   { timestamps: true }
 );

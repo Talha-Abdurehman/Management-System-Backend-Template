@@ -179,6 +179,9 @@ exports.getOrder = async (req, res, next) => {
     const { startDate, endDate } = req.query;
     let queryFilter = {};
 
+    // By default, only show non-archived orders.
+    queryFilter.isArchived = { $ne: true };
+
     if (startDate) {
       const startOfDay = new Date(startDate);
       startOfDay.setUTCHours(0, 0, 0, 0); // Start of the day in UTC
@@ -282,7 +285,6 @@ exports.deleteOrderById = async (req, res, next) => {
   }
 };
 
-// New controller for adding payment to an order
 exports.addPaymentToOrder = async (req, res, next) => {
   try {
     const { orderId } = req.params;
@@ -338,75 +340,35 @@ exports.deleteOrders = async (req, res, next) => {
     } else if (confirmDeleteAll !== 'true') {
       await session.abortTransaction();
       session.endSession();
-      return next(new AppError("You must provide a date range or confirm deletion of ALL orders by setting 'confirmDeleteAll=true'. This is a safety measure.", 400));
+      return next(new AppError("You must provide a date range or confirm archival of ALL orders by setting 'confirmDeleteAll=true'. This is a safety measure.", 400));
     }
 
-    const ordersToDelete = await Orders.find(filter).session(session);
+    // Always apply the non-archived filter to avoid re-archiving
+    filter.isArchived = { $ne: true };
 
-    if (ordersToDelete.length === 0) {
+    const updateResult = await Orders.updateMany(
+      filter,
+      { $set: { isArchived: true } },
+      { session }
+    );
+
+    if (updateResult.matchedCount === 0) {
       await session.abortTransaction();
       session.endSession();
-      return res.status(200).json({ message: "No orders found in the specified criteria to delete." });
-    }
-
-    const historyUpdates = {};
-    for (const order of ordersToDelete) {
-      const dateKey = order.createdAt.toISOString().slice(0, 10);
-      if (!historyUpdates[dateKey]) {
-        historyUpdates[dateKey] = { profitToSubtract: 0, ordersToSubtract: 0 };
-      }
-      historyUpdates[dateKey].profitToSubtract += order.total_price || 0;
-      historyUpdates[dateKey].ordersToSubtract += 1;
-    }
-
-    for (const [dateStr, { profitToSubtract, ordersToSubtract }] of Object.entries(historyUpdates)) {
-      const date = new Date(dateStr);
-      const year = date.getUTCFullYear();
-      const month = date.getUTCMonth() + 1;
-      const day = date.getUTCDate();
-      await BusinessHistory.updateOne(
-        { year: year, "months.month": month, "months.days.day": day },
-        {
-          $inc: {
-            "months.$[m].days.$[d].totalProfit": -profitToSubtract,
-            "months.$[m].days.$[d].totalOrders": -ordersToSubtract
-          }
-        },
-        {
-          arrayFilters: [{ "m.month": month }, { "d.day": day }],
-          session
-        }
-      );
-    }
-
-    const customerIdsToUpdate = [...new Set(ordersToDelete.map(o => o.customer).filter(id => id).map(id => id.toString()))];
-    const Customer = require("../models/Customers.model.js");
-    const deleteResult = await Orders.deleteMany(filter, { session });
-
-    if (customerIdsToUpdate.length > 0) {
-      await Customer.updateMany(
-        { _id: { $in: customerIdsToUpdate } },
-        [{ $set: { cOrders: { $filter: { input: "$cOrders", as: "orderId", cond: { $not: { $in: ["$$orderId", ordersToDelete.map(o => o._id)] } } } } } }],
-        { session }
-      );
-
-      const affectedCustomers = await Customer.find({ _id: { $in: customerIdsToUpdate } }).session(session);
-      for (const customer of affectedCustomers) {
-        await customer.recalculateBalances({ session });
-      }
+      return res.status(200).json({ message: "No active orders found in the specified criteria to archive." });
     }
 
     await session.commitTransaction();
 
     res.status(200).json({
-      message: `${deleteResult.deletedCount} order(s) deleted successfully.`,
-      deletedCount: deleteResult.deletedCount
+      message: `${updateResult.modifiedCount} order(s) archived and cleared from view successfully.`,
+      archivedCount: updateResult.modifiedCount
     });
 
   } catch (err) {
     await session.abortTransaction();
-    console.error(`[OrderController.deleteOrders] Error: ${err.stack || err.message}`);
-    next(new AppError(`Error deleting orders: ${err.message}`, 500));
+    console.error(`[OrderController.deleteOrders (Archive)] Error: ${err.stack || err.message}`);
+    next(new AppError(`Error archiving orders: ${err.message}`, 500));
   } finally {
     session.endSession();
   }
